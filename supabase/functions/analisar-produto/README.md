@@ -42,3 +42,18 @@ Em **Edge Functions → Manage secrets** (ou Settings → Edge Functions), adici
 - Valor: sua chave da Anthropic (começa com `sk-ant-...`)
 
 Nunca coloque essa chave em nenhum arquivo do repositório — ela fica só como secret da função.
+
+`SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` já são injetadas automaticamente pelo Supabase em toda Edge Function — não precisa configurar nada extra para elas.
+
+## 4. Limite de gastos na Anthropic (recomendado)
+
+A função tem um limite de 20 análises/minuto (proteção básica contra abuso), mas o controle mais importante é feito direto na sua conta:
+
+- Acesse **console.anthropic.com → Settings → Billing → Usage limits**
+- Configure um limite mensal de gastos compatível com o uso esperado
+
+Isso evita surpresas na fatura caso a chave seja usada de forma inesperada.
+
+## Se você já publicou uma versão anterior da função
+
+Sempre que `index.ts` for atualizado neste repositório, é preciso **colar o novo conteúdo e clicar em Deploy de novo** no Supabase — o código daqui não se sincroniza sozinho com o que está publicado lá.
