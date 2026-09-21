@@ -107,11 +107,12 @@
         selectedForDeletion.delete(i);
         removeFromDeactivationReport(i);
         addToActiveReport(i,'Validado – Manter Ativo pela aba '+(sheet==='NCM_Mesma_Descricao'?'NCM Mesma Descrição':'Descrições Duplicadas'));
+        touchTimestamp(MAIN_SHEET+'|'+i);
       });
       log('Validação de grupo pela aba analítica',matches[0],matches.length+' cadastro(s) correspondente(s) enviados ao Relatório Mantidos Ativos');
       toast(matches.length+' cadastro(s) validado(s). O item foi movido para o final da lista.');
     }else{
-      matches.forEach(i=>{validated.delete(MAIN_SHEET+'|'+i);removeFromActiveReport(i)});
+      matches.forEach(i=>{validated.delete(MAIN_SHEET+'|'+i);removeFromActiveReport(i);touchTimestamp(MAIN_SHEET+'|'+i)});
       log('Validação de grupo desfeita pela aba analítica',matches[0],matches.length+' cadastro(s) retornaram para análise');
       toast('Validação desfeita. O item voltou para a lista de pendentes.');
     }
@@ -130,6 +131,7 @@
     selectedForDeletion.delete(idx);
     removeFromDeactivationReport(idx);
     addToActiveReport(idx,'Validado – Manter Ativo (principal)');
+    touchTimestamp(MAIN_SHEET+'|'+idx);
     persist();
     log('Validação do cadastro principal',idx,'Confirmado para permanecer ativo');
     render();
@@ -141,12 +143,13 @@
     selectedForDeletion.delete(idx);
     removeFromDeactivationReport(idx);
     addToActiveReport(idx,'Validado – Manter Ativo');
+    touchTimestamp(MAIN_SHEET+'|'+idx);
     persist();
     log('Validação – Manter Ativo',idx,'Registro confirmado para permanecer ativo');
     render();
     toast('Produto validado e enviado ao Relatório Mantidos Ativos.');
   };
-  window.undoReviewValidation=function(idx){if(!requireUser()||!confirm('Deseja desfazer a decisão de manter este cadastro ativo?'))return;validated.delete(MAIN_SHEET+'|'+idx);removeFromActiveReport(idx);log('Validação desfeita',idx,'Decisão de manter ativo removida');persist();render();toast('Validação e registro no relatório foram desfeitos.')};
+  window.undoReviewValidation=function(idx){if(!requireUser()||!confirm('Deseja desfazer a decisão de manter este cadastro ativo?'))return;validated.delete(MAIN_SHEET+'|'+idx);removeFromActiveReport(idx);touchTimestamp(MAIN_SHEET+'|'+idx);log('Validação desfeita',idx,'Decisão de manter ativo removida');persist();render();toast('Validação e registro no relatório foram desfeitos.')};
   window.toggleReviewDeletion=function(idx,checked,checkbox){
     if(checked){
       if(!requireUser()){if(checkbox)checkbox.checked=false;return}
@@ -156,6 +159,7 @@
       removeFromActiveReport(idx);
       selectedForDeletion.add(idx);
       addToDeactivationReport(idx,reason);
+      touchTimestamp(MAIN_SHEET+'|'+idx);
       persist();
       log('Separar para Desativação',idx,'Motivo: '+reason);
       toast('Cadastro separado e incluído no Relatório de Desativação.');
@@ -172,10 +176,10 @@
     render();
     toast('Separação desfeita e cadastro removido do relatório.');
   };
-  window.deleteSelectedReview=function(){const chosen=[...selectedForDeletion].filter(i=>isActive(MAIN_SHEET,i));if(!chosen.length)return;if(!requireUser())return;const principals=principalsByBranch(indices()),blocked=chosen.filter(i=>principals.has(i)&&!validated.has(MAIN_SHEET+'|'+i));if(blocked.length){alert('Existem cadastros principais selecionados que ainda não foram validados. Valide-os antes da exclusão.');return}if(!confirm('Confirma a exclusão de '+chosen.length+' registro(s) separado(s)? A ação será registrada no histórico.'))return;chosen.forEach(idx=>{const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h));log('Exclusão de registro separado',idx,'Código '+r[ci]+' excluído após triagem');deletes.add(MAIN_SHEET+'|'+idx);const item=deactivationReport.find(x=>x.key===reportKey(idx)&&x.status==='Selecionado');if(item){item.status='Desativado';item.completedAt=new Date().toISOString()}});saveDeactivationReport();selectedForDeletion.clear();persist();render();toast('Registros selecionados excluídos e registrados no relatório.')};
+  window.deleteSelectedReview=function(){const chosen=[...selectedForDeletion].filter(i=>isActive(MAIN_SHEET,i));if(!chosen.length)return;if(!requireUser())return;const principals=principalsByBranch(indices()),blocked=chosen.filter(i=>principals.has(i)&&!validated.has(MAIN_SHEET+'|'+i));if(blocked.length){alert('Existem cadastros principais selecionados que ainda não foram validados. Valide-os antes da exclusão.');return}if(!confirm('Confirma a exclusão de '+chosen.length+' registro(s) separado(s)? A ação será registrada no histórico.'))return;chosen.forEach(idx=>{const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h));log('Exclusão de registro separado',idx,'Código '+r[ci]+' excluído após triagem');deletes.add(MAIN_SHEET+'|'+idx);touchTimestamp(MAIN_SHEET+'|'+idx);const item=deactivationReport.find(x=>x.key===reportKey(idx)&&x.status==='Selecionado');if(item){item.status='Desativado';item.completedAt=new Date().toISOString()}});saveDeactivationReport();selectedForDeletion.clear();persist();render();toast('Registros selecionados excluídos e registrados no relatório.')};
   function installEditTracking(){const body=document.getElementById('mBody');if(!body||editContext===null)return;body.querySelectorAll('[data-i]').forEach(input=>{input.addEventListener('input',()=>{const changed=String(input.value)!==String(editOriginalRow[+input.dataset.i]??'');input.closest('.fld').classList.toggle('field-changed',changed)})});const box=document.createElement('section');box.className='edit-tracking';box.innerHTML='<h4>Rastreabilidade da alteração</h4><p>Os campos modificados serão identificados automaticamente. Marque o Protheus somente depois de confirmar que a atualização também foi realizada no ERP.</p><div class="edit-tracking-options"><label class="edit-status-option"><input type="checkbox" id="editPlatformStatus" checked disabled> Alterado na plataforma</label><label class="edit-status-option"><input type="checkbox" id="editProtheusStatus"> Atualizado no Protheus</label></div>';body.appendChild(box)}
   window.editReviewRecord=function(idx){if(!requireUser())return;const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial/i.test(h));if(!confirm('Deseja alterar o cadastro '+r[ci]+' da Filial '+r[fi]+'?'))return;editContext=idx;editOriginalRow=[...r];openModal(MAIN_SHEET,idx);installEditTracking()};
-  window.deleteReviewRecord=function(idx){if(!requireUser())return;const list=indices(),principals=principalsByBranch(list),d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial/i.test(h));if(principals.has(idx)&&!validated.has(MAIN_SHEET+'|'+idx)){alert('Valide o cadastro principal desta filial antes de excluí-lo.');return}if(!confirm('Confirma a exclusão do cadastro '+r[ci]+' da Filial '+r[fi]+'?'))return;log('Exclusão de registro',idx,'Código '+r[ci]+' excluído');deletes.add(MAIN_SHEET+'|'+idx);persist();render();toast('Registro excluído e histórico atualizado.')};
+  window.deleteReviewRecord=function(idx){if(!requireUser())return;const list=indices(),principals=principalsByBranch(list),d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial/i.test(h));if(principals.has(idx)&&!validated.has(MAIN_SHEET+'|'+idx)){alert('Valide o cadastro principal desta filial antes de excluí-lo.');return}if(!confirm('Confirma a exclusão do cadastro '+r[ci]+' da Filial '+r[fi]+'?'))return;log('Exclusão de registro',idx,'Código '+r[ci]+' excluído');deletes.add(MAIN_SHEET+'|'+idx);touchTimestamp(MAIN_SHEET+'|'+idx);persist();render();toast('Registro excluído e histórico atualizado.')};
 
   window.saveModal=function(){const idx=editContext;if(idx===null){originalSave();return}const d=DATA[MAIN_SHEET],inputs=[...document.querySelectorAll('#mBody [data-i]')],changedFields=inputs.filter(el=>String(el.value)!==String(editOriginalRow[+el.dataset.i]??'')).map(el=>d.headers[+el.dataset.i]),protheus=!!document.getElementById('editProtheusStatus')?.checked;if(!changedFields.length){alert('Nenhum campo foi alterado.');return}if(!confirm('Salvar alterações nos campos: '+changedFields.join(', ')+'?'))return;originalSave();editTracking.unshift({idx,key:reportKey(idx),fields:changedFields,platform:true,protheus,user:user(),ts:new Date().toISOString(),description});safeLocalSet('emtel_edit_tracking',JSON.stringify(editTracking.slice(0,1000)));queueMovementSnapshot();log('Alteração de cadastro',idx,'Campos: '+changedFields.join(', ')+' • Plataforma: atualizado • Protheus: '+(protheus?'atualizado':'pendente'));editContext=null;editOriginalRow=null;render();toast(protheus?'Alteração registrada na plataforma e no Protheus.':'Alteração salva; atualização no Protheus ficou pendente.')};
   window.closeModal=function(){editContext=null;editOriginalRow=null;return originalClose()};
@@ -231,6 +235,7 @@
     description=item.description;
     validated.delete(MAIN_SHEET+'|'+idx);
     removeFromActiveReport(idx);
+    touchTimestamp(MAIN_SHEET+'|'+idx);
     persist();
     log('Validação desfeita pelo relatório',idx,'Produto removido do Relatório Mantidos Ativos');
     render();
@@ -247,6 +252,7 @@
     if(wasCompleted)deletes.delete(key);
     deactivationReport.splice(pos,1);
     saveDeactivationReport();
+    touchTimestamp(key);
     persist();
     log(wasCompleted?'Cadastro restaurado pelo relatório':'Separação desfeita pelo relatório',idx,wasCompleted?'Cadastro restaurado e removido do Relatório de Desativação':'Produto removido do Relatório de Desativação');
     render();
