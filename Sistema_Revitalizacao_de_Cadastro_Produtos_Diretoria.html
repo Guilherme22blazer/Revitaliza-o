@@ -85,6 +85,18 @@ tbody tr.edited{background:var(--amarelo)!important}
 .ia-applied{color:#047857;font-weight:700}
 .btn.small{padding:6px 10px;font-size:12px}
 .ia-toast{position:fixed;right:22px;bottom:22px;z-index:999;background:#087b59;color:#fff;padding:13px 17px;border-radius:10px;box-shadow:0 12px 30px #0004;font-size:12px;font-weight:700}
+.assign-panel{margin-bottom:16px}
+.assign-stats{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+.assign-stat{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:10px;background:var(--bg);border-left:4px solid var(--chip-color,var(--azul));font-size:13px}
+.assign-stat b{font-size:15px}
+.assign-total{border-left-color:var(--azul2)}
+.assign-filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.assign-filter{border:1px solid var(--bd);border-left:4px solid var(--chip-color,var(--bd));background:#fff;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;display:flex;gap:6px;align-items:center;color:var(--txt)}
+.assign-filter b{background:var(--bg);border-radius:10px;padding:0 6px}
+.assign-filter.active{background:var(--azul);color:#fff;border-color:var(--azul)}
+.assign-badge{display:inline-block;margin-top:4px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:var(--bg);border-left:3px solid var(--chip-color,var(--muted))}
+.assign-badge.assign-none{color:var(--muted);border-left-color:var(--muted)}
+.assign-select{font-size:11px;padding:5px 6px;border-radius:6px;border:1px solid var(--bd);max-width:132px}
 .fld{margin-bottom:14px}
 .fld label{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
 .fld input,.fld textarea{width:100%;padding:9px 12px;border:1px solid var(--bd);border-radius:7px;font-size:14px;font-family:inherit}
@@ -268,6 +280,129 @@ function subscribeSupabaseRealtime(){
 }
 
 function touchTimestamp(key){ timestamps[key] = new Date().toISOString(); supabaseUpsert(key); }
+
+// ===== Atribuição de tarefas por usuário (NCM Mesma Descrição / Descrições Duplicadas) =====
+const TASK_USERS = [
+  {id:'guilherme', nome:'Guilherme', emoji:'🔵', cor:'#1e4fb8'},
+  {id:'caio',      nome:'Caio',      emoji:'🟢', cor:'#16a34a'},
+  {id:'karolayne', nome:'Karolayne', emoji:'🔴', cor:'#dc2626'},
+  {id:'joao',      nome:'João',      emoji:'⚫', cor:'#111827'}
+];
+const assignments = JSON.parse(localStorage.getItem('emtel_assignments')||'{}');
+function taskUserById(id){ return TASK_USERS.find(u=>u.id===id) || null; }
+function reviewUserName(){ return (localStorage.getItem('emtel_review_user')||'').trim(); }
+function ensureReviewUserName(){
+  let u = reviewUserName();
+  if(!u){ u = (prompt('Informe seu nome para registrar esta atribuição:')||'').trim(); if(u) localStorage.setItem('emtel_review_user', u); }
+  return u;
+}
+function assignmentsStore(){
+  const value = JSON.stringify(assignments);
+  if(typeof window.safeEmtelStore==='function') window.safeEmtelStore('emtel_assignments', value);
+  else try{localStorage.setItem('emtel_assignments', value)}catch(e){}
+}
+function assignmentSyncSupabase(key){
+  if(!supa) return;
+  const a = assignments[key];
+  const [sheet, idxStr] = key.split('|');
+  supa.from('atribuicoes').upsert({
+    key, sheet, row_idx: Number(idxStr),
+    responsavel: a?a.responsavel:null,
+    atribuido_por: a?a.atribuidoPor:null,
+    atribuido_em: a?a.atribuidoEm:null,
+    historico: a?a.historico:[],
+    atualizado_em: new Date().toISOString()
+  }).then(({error})=>{ if(error) console.warn('Supabase upsert (atribuicoes) falhou:', error.message); });
+}
+function applyRemoteAssignment(row){
+  if(row.responsavel){
+    assignments[row.key] = {responsavel:row.responsavel, atribuidoPor:row.atribuido_por, atribuidoEm:row.atribuido_em, historico:row.historico||[]};
+  } else {
+    delete assignments[row.key];
+  }
+}
+async function loadAssignmentsFromSupabase(){
+  if(!supa) return;
+  try{
+    const { data, error } = await supa.from('atribuicoes').select('*');
+    if(error){ console.warn('Supabase load (atribuicoes) falhou:', error.message); return; }
+    data.forEach(applyRemoteAssignment);
+    assignmentsStore();
+    render();
+  }catch(e){ console.warn('Falha ao carregar atribuições do Supabase:', e); }
+}
+function subscribeAssignmentsRealtime(){
+  if(!supa) return;
+  supa.channel('atribuicoes-changes')
+    .on('postgres_changes', {event:'*', schema:'public', table:'atribuicoes'}, payload=>{
+      if(payload.eventType==='DELETE'){
+        const key = payload.old && payload.old.key; if(!key) return;
+        delete assignments[key];
+      } else {
+        applyRemoteAssignment(payload.new);
+      }
+      assignmentsStore(); render();
+    })
+    .subscribe();
+}
+function assignTask(sheet, idx, userId){
+  const quem = ensureReviewUserName();
+  if(!quem) return;
+  const key = sheet+'|'+idx;
+  const current = assignments[key];
+  const historico = current ? [...(current.historico||[]), {responsavel:current.responsavel, atribuidoPor:current.atribuidoPor, atribuidoEm:current.atribuidoEm}] : [];
+  if(!userId) delete assignments[key];
+  else assignments[key] = {responsavel:userId, atribuidoPor:quem, atribuidoEm:new Date().toISOString(), historico};
+  assignmentsStore();
+  assignmentSyncSupabase(key);
+  drawRows(sheet);
+  refreshAssignmentPanel(sheet);
+}
+function assignmentCounts(sheet){
+  const counts = {}; TASK_USERS.forEach(u=>counts[u.id]=0);
+  let total = 0;
+  const n = rowCount(sheet);
+  for(let i=0;i<n;i++){
+    if(!isActive(sheet,i)) continue;
+    total++;
+    const a = assignments[sheet+'|'+i];
+    if(a && counts[a.responsavel]!==undefined) counts[a.responsavel]++;
+  }
+  return {counts, total};
+}
+function assignmentPanelHtml(sheet){
+  if(sheet!=='NCM_Mesma_Descricao' && sheet!=='Descricoes_Duplicadas') return '';
+  const {counts, total} = assignmentCounts(sheet);
+  const chip = u=>`<button class="assign-filter" data-user="${u.id}" style="--chip-color:${u.cor}" onclick="setAssignmentFilter('${sheet}','${u.id}')">${u.emoji} ${escapeHtml(u.nome)}<b>${counts[u.id]}</b></button>`;
+  return `
+    <div class="panel assign-panel">
+      <h2>Distribuição de tarefas</h2>
+      <div class="assign-stats">
+        ${TASK_USERS.map(u=>`<div class="assign-stat" style="--chip-color:${u.cor}"><span>${u.emoji} ${escapeHtml(u.nome)}</span><b>${counts[u.id]}</b></div>`).join('')}
+        <div class="assign-stat assign-total"><span>Total</span><b>${total}</b></div>
+      </div>
+      <div class="assign-filters" id="assignFilters">
+        <button class="assign-filter active" data-user="" onclick="setAssignmentFilter('${sheet}','')">Todos</button>
+        ${TASK_USERS.map(chip).join('')}
+        <button class="assign-filter" data-user="mine" onclick="setAssignmentFilter('${sheet}','mine')">⭐ Minhas tarefas</button>
+      </div>
+    </div>`;
+}
+function refreshAssignmentPanel(sheet){
+  const el = document.getElementById('assignPanelSlot');
+  if(el) el.outerHTML = assignmentPanelHtml(sheet).replace('<div class="panel assign-panel">','<div class="panel assign-panel" id="assignPanelSlot">');
+}
+function setAssignmentFilter(sheet, value){
+  if(value==='mine'){
+    const me = reviewUserName();
+    const mine = TASK_USERS.find(u=>u.nome.toLowerCase()===me.toLowerCase());
+    currentFilters.responsavel = mine ? mine.id : '__none__';
+  } else {
+    currentFilters.responsavel = value;
+  }
+  document.querySelectorAll('#assignFilters .assign-filter').forEach(b=>b.classList.toggle('active', b.dataset.user===value));
+  drawRows(sheet);
+}
 function fmtTimestamp(key){
   const t = timestamps[key];
   if(!t) return '';
@@ -486,7 +621,7 @@ function renderDashboard(m){
 }
 
 // ===== FOLHA / TABELA =====
-let currentFilters = {q:'',filial:'',ncm:'',desc:'',onlyDup:false,onlyValidated:false,onlyPending:false,
+let currentFilters = {q:'',filial:'',ncm:'',desc:'',onlyDup:false,onlyValidated:false,onlyPending:false,responsavel:'',
                       filialIdx:-1,ncmIdx:-1,descIdx:-1, dupSet:new Set()};
 
 function buildDupSet(sheet){
@@ -525,6 +660,7 @@ function renderSheet(m, sheet){
       <div class="card clk" onclick="setQuick('val')"><h3>Validados</h3><div class="v">${st.val.toLocaleString('pt-BR')}</div></div>
       <div class="card clk" onclick="setQuick('pend')"><h3>Pendentes</h3><div class="v">${st.pend.toLocaleString('pt-BR')}</div></div>
     </div>
+    ${assignmentPanelHtml(sheet).replace('<div class="panel assign-panel">','<div class="panel assign-panel" id="assignPanelSlot">')}
     <div class="panel">
       <h2>${labelFor(sheet)} <span class="badge">${rowCount(sheet)} registros</span></h2>
       <div class="toolbar">
@@ -559,7 +695,7 @@ function renderSheet(m, sheet){
     q:'', filial:(init.filial||'').toLowerCase(),
     ncm:(init.ncm||'').toLowerCase(),
     desc:(init.desc||'').toLowerCase(),
-    onlyDup: !!init.onlyDup, onlyValidated: !!init.onlyValidated, onlyPending: !!init.onlyPending,
+    onlyDup: !!init.onlyDup, onlyValidated: !!init.onlyValidated, onlyPending: !!init.onlyPending, responsavel:'',
     filialIdx, ncmIdx, descIdx,
     dupSet: buildDupSet(sheet)
   };
@@ -595,7 +731,8 @@ function setQuick(kind){
 function clearFilters(sheet){
   ['search','fFilial','fNcm','fDesc'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   ['fDup','fVal','fPend'].forEach(id=>{const el=document.getElementById(id);if(el)el.checked=false;});
-  Object.assign(currentFilters,{q:'',filial:'',ncm:'',desc:'',onlyDup:false,onlyValidated:false,onlyPending:false});
+  Object.assign(currentFilters,{q:'',filial:'',ncm:'',desc:'',onlyDup:false,onlyValidated:false,onlyPending:false,responsavel:''});
+  document.querySelectorAll('#assignFilters .assign-filter').forEach(b=>b.classList.toggle('active', b.dataset.user===''));
   drawRows(sheet);
 }
 
@@ -623,6 +760,10 @@ function drawRows(sheet){
     if(f.onlyDup && !isDup) continue;
     if(f.onlyValidated && !isVal) continue;
     if(f.onlyPending && isVal) continue;
+    if(f.responsavel){
+      const owner = assignments[key] ? assignments[key].responsavel : '';
+      if(f.responsavel==='__none__' || owner!==f.responsavel) continue;
+    }
     shown++;
     if(shown>max){ html+=`<tr><td colspan="${d.headers.length+2}" style="text-align:center;padding:14px;color:var(--muted)">Mostrando primeiros ${max} resultados. Refine sua busca.</td></tr>`; break; }
     const cls = (edits[key]?'edited ':'') + (isVal?'val ':'');
@@ -647,11 +788,22 @@ function drawRows(sheet){
       : `<button class="e" onclick="openModal('${sheet}',${i})">Editar</button>`;
     const validateButton = isNcmMesmaDescricao ? '' :
       `<button class="v" onclick="toggleValidate('${sheet}',${i})" title="Validar">${isVal?'↺ Desfazer':'✓ Validar'}</button>`;
+    const isAssignableSheet = isDescriptionDuplicate || isNcmMesmaDescricao;
+    const assignInfo = isAssignableSheet ? assignments[key] : null;
+    const assignUser = assignInfo ? taskUserById(assignInfo.responsavel) : null;
+    const assignBadge = !isAssignableSheet ? '' : (assignUser
+      ? `<br><span class="assign-badge" style="--chip-color:${assignUser.cor}">${assignUser.emoji} ${escapeHtml(assignUser.nome)}</span>`
+      : `<br><span class="assign-badge assign-none">Não atribuído</span>`);
+    const assignSelect = !isAssignableSheet ? '' : `<select class="assign-select" onclick="event.stopPropagation()" onchange="assignTask('${sheet}',${i},this.value)">
+        <option value="">Atribuir tarefa…</option>
+        ${TASK_USERS.map(u=>`<option value="${u.id}" ${assignInfo&&assignInfo.responsavel===u.id?'selected':''}>${u.emoji} ${escapeHtml(u.nome)}</option>`).join('')}
+      </select>`;
     html += `<tr class="${cls}" onclick="${rowAction}">`+
-            `<td onclick="event.stopPropagation()">${statusBadgeWithTs}</td>`+
+            `<td onclick="event.stopPropagation()">${statusBadgeWithTs}${assignBadge}</td>`+
             row.map(c=>`<td>${escapeHtml(c)}</td>`).join('')+
             `<td onclick="event.stopPropagation()"><div class="act">`+
             validateButton+
+            assignSelect+
             detailButton+
             `<button class="x" onclick="deleteRow('${sheet}',${i})">Excluir</button>`+
             `</div></td></tr>`;
@@ -1462,8 +1614,11 @@ render();
 loadImportedFromDB();
 loadStateFromSupabase();
 subscribeSupabaseRealtime();
+loadAssignmentsFromSupabase();
+subscribeAssignmentsRealtime();
 // reforço: revalida com o banco periodicamente, caso o Realtime não entregue algum evento
 setInterval(loadStateFromSupabase, 20000);
+setInterval(loadAssignmentsFromSupabase, 20000);
 // auto-refresh do dashboard em tempo real
 setInterval(()=>{if(current==='dashboard'){const el=document.querySelector('.exec-updated');if(el)el.textContent='Atualizado em '+new Date().toLocaleString('pt-BR');}},15000);
 // auto-refresh da aba Protheus (status visual em tempo real)
