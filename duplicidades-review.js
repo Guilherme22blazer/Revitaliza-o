@@ -60,6 +60,7 @@
   function user(){return (localStorage.getItem('emtel_review_user')||'').trim()}
   function setUser(v){safeLocalSet('emtel_review_user',(v||'').trim())}
   function requireUser(){let u=user();if(!u){u=(prompt('Informe seu nome para registrar a ação:')||'').trim();if(u)setUser(u)}return u}
+  function requireUserAlways(){const u=(prompt('Informe seu nome para registrar esta validação:',user())||'').trim();if(!u)return '';setUser(u);return u}
   function indices(){const d=DATA[MAIN_SHEET],di=d.headers.findIndex(h=>/descric|descr|produto|nome/i.test(h)),target=description.trim().toUpperCase(),out=[];for(let i=0;i<rowCount(MAIN_SHEET);i++){if(String(getRow(MAIN_SHEET,i)[di]||'').trim().toUpperCase()===target)out.push(i)}return out}
   function numberCode(v){const x=String(v??'').replace(/\D/g,'');return x?Number(x):Number.MAX_SAFE_INTEGER}
   function principalsByBranch(list){const d=DATA[MAIN_SHEET],ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial|loja|unidade/i.test(h)),groups=new Map();list.filter(i=>isActive(MAIN_SHEET,i)).forEach(i=>{const branch=String(getRow(MAIN_SHEET,i)[fi]??'—');if(!groups.has(branch))groups.set(branch,[]);groups.get(branch).push(i)});const result=new Set();groups.forEach(items=>{if(items.length>=2){items.sort((a,b)=>numberCode(getRow(MAIN_SHEET,a)[ci])-numberCode(getRow(MAIN_SHEET,b)[ci])||a-b);result.add(items[0])}});return result}
@@ -94,8 +95,10 @@
     }
     if(!matches.length)return 0;
     description=String(sourceRow[sourceDescIdx]??'');
-    if(!requireUser()){
-      if(shouldValidate)validated.delete(sheet+'|'+idx);else validated.add(sheet+'|'+idx);
+    if(shouldValidate){
+      if(!requireUserAlways()){ validated.delete(sheet+'|'+idx); return 0; }
+    } else if(!requireUser()){
+      validated.add(sheet+'|'+idx);
       return 0;
     }
     if(shouldValidate){
@@ -122,7 +125,7 @@
   window.closeDuplicateReview=function(){description='';productReviewMode=false;goTo(originSheet)};
   window.setReviewUser=setUser;
   window.validateReviewPrincipal=function(idx){
-    if(!requireUser()||!confirm('Confirma que este é o cadastro principal e deve permanecer ativo?'))return;
+    if(!requireUserAlways()||!confirm('Confirma que este é o cadastro principal e deve permanecer ativo?'))return;
     validated.add(MAIN_SHEET+'|'+idx);
     selectedForDeletion.delete(idx);
     removeFromDeactivationReport(idx);
@@ -133,7 +136,7 @@
     toast('Cadastro principal validado e enviado ao Relatório Mantidos Ativos.');
   };
   window.validateReviewRecord=function(idx){
-    if(!requireUser()||!confirm('Confirma que este cadastro deve permanecer ativo?'))return;
+    if(!requireUserAlways()||!confirm('Confirma que este cadastro deve permanecer ativo?'))return;
     validated.add(MAIN_SHEET+'|'+idx);
     selectedForDeletion.delete(idx);
     removeFromDeactivationReport(idx);
