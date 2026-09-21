@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('emtel_theme')||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light')}catch(e){document.documentElement.dataset.theme='light'}</script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root{--azul:#1e4fb8;--azul2:#143a8a;--vermelho:#e3122b;--bg:#f4f6fb;--card:#fff;--txt:#1a2238;--muted:#6b7280;--bd:#e5e7eb;--amarelo:#fff7c2;}
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Roboto,sans-serif}
@@ -182,7 +183,60 @@ const deletes   = new Set(JSON.parse(localStorage.getItem('emtel_dels')||'[]'));
 const validated = new Set(JSON.parse(localStorage.getItem('emtel_val')||'[]'));
 // data/hora da última alteração de cada registro (edição, validação ou exclusão)
 const timestamps = JSON.parse(localStorage.getItem('emtel_ts')||'{}');
-function touchTimestamp(key){ timestamps[key] = new Date().toISOString(); }
+
+// ===== Supabase: banco de dados compartilhado das validações/edições/exclusões =====
+const SUPABASE_URL = 'https://chgiayjwhhkyjaykguyv.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_ewTRyjtc2i-Vb4zB_DbL-g_QSQ02s6P';
+const supa = (typeof supabase!=='undefined' && supabase.createClient)
+  ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+function supabaseUpsert(key){
+  if(!supa) return;
+  const [sheet, idxStr] = key.split('|');
+  supa.from('validacoes').upsert({
+    key, sheet, row_idx: Number(idxStr),
+    validado: validated.has(key),
+    excluido: deletes.has(key),
+    edicao: edits[key] || null,
+    atualizado_em: timestamps[key] || new Date().toISOString()
+  }).then(({error})=>{ if(error) console.warn('Supabase upsert falhou:', error.message); });
+}
+
+function applyRemoteRow(row){
+  const key = row.key;
+  if(row.excluido) deletes.add(key); else deletes.delete(key);
+  if(row.validado) validated.add(key); else validated.delete(key);
+  if(row.edicao) edits[key] = row.edicao; else delete edits[key];
+  if(row.atualizado_em) timestamps[key] = row.atualizado_em;
+}
+
+async function loadStateFromSupabase(){
+  if(!supa) return;
+  try{
+    const { data, error } = await supa.from('validacoes').select('*');
+    if(error){ console.warn('Supabase load falhou:', error.message); return; }
+    data.forEach(applyRemoteRow);
+    persist();
+    render();
+  }catch(e){ console.warn('Falha ao carregar dados do Supabase:', e); }
+}
+
+function subscribeSupabaseRealtime(){
+  if(!supa) return;
+  supa.channel('validacoes-changes')
+    .on('postgres_changes', {event:'*', schema:'public', table:'validacoes'}, payload=>{
+      if(payload.eventType==='DELETE'){
+        const key = payload.old && payload.old.key; if(!key) return;
+        deletes.delete(key); validated.delete(key); delete edits[key]; delete timestamps[key];
+      } else {
+        applyRemoteRow(payload.new);
+      }
+      persist(); render();
+    })
+    .subscribe();
+}
+
+function touchTimestamp(key){ timestamps[key] = new Date().toISOString(); supabaseUpsert(key); }
 function fmtTimestamp(key){
   const t = timestamps[key];
   if(!t) return '';
@@ -868,7 +922,7 @@ async function resetAll(){
   Object.keys(timestamps).forEach(k=>delete timestamps[k]);
   deletes.clear();validated.clear();await saveImportedToDB();persist();render();
 }
-function restoreRow(key){ deletes.delete(key); persist(); render(); }
+function restoreRow(key){ deletes.delete(key); touchTimestamp(key); persist(); render(); }
 function restoreAll(){
   if(!confirm('Restaurar todas as exclusões pendentes?')) return;
   deletes.clear(); persist(); render();
@@ -1177,6 +1231,8 @@ protheusEnsureTimer();
 
 render();
 loadImportedFromDB();
+loadStateFromSupabase();
+subscribeSupabaseRealtime();
 // auto-refresh do dashboard em tempo real
 setInterval(()=>{if(current==='dashboard'){const el=document.querySelector('.exec-updated');if(el)el.textContent='Atualizado em '+new Date().toLocaleString('pt-BR');}},15000);
 // auto-refresh da aba Protheus (status visual em tempo real)
