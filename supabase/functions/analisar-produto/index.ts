@@ -1,12 +1,12 @@
 // Edge Function: analisar-produto
-// Recebe os dados de um produto e usa a Claude API (Anthropic) para gerar
-// uma auditoria fiscal (descrição, NCM, alertas, sugestões).
-// A chave da API fica só aqui no servidor (secret ANTHROPIC_API_KEY),
+// Recebe os dados de um produto e usa a API do Google Gemini (gratuita) para
+// gerar uma auditoria fiscal (descrição, NCM, alertas, sugestões).
+// A chave da API fica só aqui no servidor (secret GEMINI_API_KEY),
 // nunca é exposta ao navegador.
 //
 // Proteções aplicadas:
 // - CORS restrito às origens permitidas (evita que outros sites usem esta
-//   função com a chave pública do projeto e gerem custo indevido de IA).
+//   função com a chave pública do projeto e consumam sua cota gratuita).
 // - Rate limit simples baseado na própria tabela de histórico (analises_ia),
 //   para conter picos de uso automatizado/abusivo.
 // - Respostas de erro não ecoam o corpo bruto de provedores externos ao
@@ -18,6 +18,7 @@ const ALLOWED_ORIGINS = [
   "https://guilherme22blazer.github.io",
 ];
 const RATE_LIMIT_MAX_PER_MINUTE = 20;
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 function corsHeaders(origin: string | null): Record<string, string> {
   const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
@@ -36,7 +37,7 @@ Sua função é AUDITAR o cadastro de um produto e apontar problemas de descriç
 Regras obrigatórias:
 - Nunca invente vigência, extinção ou alteração oficial de NCM: você não tem acesso a uma base fiscal oficial atualizada nesta análise. Diga isso claramente no campo "fontes".
 - Baseie suas sugestões de NCM no seu conhecimento geral da tabela NCM/TIPI e no raciocínio sobre a descrição e demais campos do produto, mas deixe claro que é uma sugestão que REQUER VALIDAÇÃO por um responsável fiscal.
-- Se as informações do produto forem insuficientes para uma classificação seura, diga isso explicitamente e não force uma sugestão de NCM.
+- Se as informações do produto forem insuficientes para uma classificação segura, diga isso explicitamente e não force uma sugestão de NCM.
 - "confianca" é sua estimativa de 0 a 100 de quão bem a descrição/dados sustentam a classificação sugerida — nunca invente um número preciso sem justificativa coerente.
 - Responda ESTRITAMENTE em JSON válido, sem nenhum texto fora do JSON, seguindo exatamente este formato:
 
@@ -98,10 +99,10 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const apiKey = Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) {
       return new Response(
-        JSON.stringify({ error: "ANTHROPIC_API_KEY não configurada nas secrets da função." }),
+        JSON.stringify({ error: "GEMINI_API_KEY não configurada nas secrets da função." }),
         { status: 500, headers },
       );
     }
@@ -121,32 +122,36 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts: [{ text: buildUserPrompt(product) }] }],
+          generationConfig: {
+            maxOutputTokens: 1500,
+            responseMimeType: "application/json",
+          },
+        }),
       },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 1500,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: buildUserPrompt(product) }],
-      }),
-    });
+    );
 
-    if (!anthropicRes.ok) {
-      const detail = await anthropicRes.text();
-      console.error("Falha ao consultar a Anthropic API:", anthropicRes.status, detail);
+    if (!geminiRes.ok) {
+      const detail = await geminiRes.text();
+      console.error("Falha ao consultar a Gemini API:", geminiRes.status, detail);
       return new Response(
-        JSON.stringify({ error: "Falha ao consultar a IA (status " + anthropicRes.status + ")." }),
+        JSON.stringify({ error: "Falha ao consultar a IA (status " + geminiRes.status + ")." }),
         { status: 502, headers },
       );
     }
 
-    const anthropicJson = await anthropicRes.json();
-    const rawText: string = anthropicJson?.content?.[0]?.text ?? "";
+    const geminiJson = await geminiRes.json();
+    const rawText: string = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
     let analysis;
     try {

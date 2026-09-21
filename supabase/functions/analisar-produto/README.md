@@ -34,25 +34,25 @@ No Supabase, **Edge Functions → Deploy a new function**:
 - Cole o conteúdo de `index.ts` (nesta mesma pasta)
 - Deploy
 
-## 3. Configurar a chave da IA
+## 3. Gerar uma chave gratuita do Google Gemini
 
-Em **Edge Functions → Manage secrets** (ou Settings → Edge Functions), adicione:
+1. Acesse https://aistudio.google.com/apikey
+2. Faça login com uma conta Google
+3. Clique em **Create API key** (não pede cartão de crédito — tem cota gratuita)
+4. Copie a chave gerada (começa com `AIza...`)
 
-- Nome: `ANTHROPIC_API_KEY`
-- Valor: sua chave da Anthropic (começa com `sk-ant-...`)
+## 4. Configurar a chave da IA
+
+Em **Edge Functions → analisar-produto → Manage secrets** (ou Settings → Edge Functions), adicione:
+
+- Nome: `GEMINI_API_KEY`
+- Valor: a chave copiada do Google AI Studio
 
 Nunca coloque essa chave em nenhum arquivo do repositório — ela fica só como secret da função.
 
 `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` já são injetadas automaticamente pelo Supabase em toda Edge Function — não precisa configurar nada extra para elas.
 
-## 4. Limite de gastos na Anthropic (recomendado)
-
-A função tem um limite de 20 análises/minuto (proteção básica contra abuso), mas o controle mais importante é feito direto na sua conta:
-
-- Acesse **console.anthropic.com → Settings → Billing → Usage limits**
-- Configure um limite mensal de gastos compatível com o uso esperado
-
-Isso evita surpresas na fatura caso a chave seja usada de forma inesperada.
+A função já tem um limite de 20 análises/minuto (proteção básica contra abuso). A cota gratuita do Gemini também tem seus próprios limites por minuto/dia — se bater no limite, a IA retorna erro até renovar.
 
 ## Se você já publicou uma versão anterior da função
 
