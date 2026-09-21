@@ -1240,6 +1240,8 @@ render();
 loadImportedFromDB();
 loadStateFromSupabase();
 subscribeSupabaseRealtime();
+// reforço: revalida com o banco periodicamente, caso o Realtime não entregue algum evento
+setInterval(loadStateFromSupabase, 20000);
 // auto-refresh do dashboard em tempo real
 setInterval(()=>{if(current==='dashboard'){const el=document.querySelector('.exec-updated');if(el)el.textContent='Atualizado em '+new Date().toLocaleString('pt-BR');}},15000);
 // auto-refresh da aba Protheus (status visual em tempo real)
