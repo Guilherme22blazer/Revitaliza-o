@@ -786,8 +786,7 @@ function drawRows(sheet){
     const detailButton = (isDescriptionDuplicate||isNcmMesmaDescricao)
       ? `<button class="e" onclick="goTo(MAIN_SHEET,${goToArgs})">Ver produtos</button>`
       : `<button class="e" onclick="openModal('${sheet}',${i})">Editar</button>`;
-    const validateButton = isNcmMesmaDescricao ? '' :
-      `<button class="v" onclick="toggleValidate('${sheet}',${i})" title="Validar">${isVal?'↺ Desfazer':'✓ Validar'}</button>`;
+    const validateButton = `<button class="v" onclick="toggleValidate('${sheet}',${i})" title="Validar">${isVal?'↺ Desfazer':'✓ Validar'}</button>`;
     const isAssignableSheet = isDescriptionDuplicate || isNcmMesmaDescricao;
     const assignInfo = isAssignableSheet ? assignments[key] : null;
     const assignUser = assignInfo ? taskUserById(assignInfo.responsavel) : null;
