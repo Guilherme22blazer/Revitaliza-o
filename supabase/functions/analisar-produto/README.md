@@ -57,3 +57,28 @@ Isso evita surpresas na fatura caso a chave seja usada de forma inesperada.
 ## Se você já publicou uma versão anterior da função
 
 Sempre que `index.ts` for atualizado neste repositório, é preciso **colar o novo conteúdo e clicar em Deploy de novo** no Supabase — o código daqui não se sincroniza sozinho com o que está publicado lá.
+
+## 5. Tabela de atribuição de tarefas (distribuição por usuário)
+
+Usada nas abas "NCM Mesma Descrição" e "Descrições Duplicadas" para marcar de qual responsável (Guilherme/Caio/Karolayne/João) é cada produto. Rode no **SQL Editor**:
+
+```sql
+create table public.atribuicoes (
+  key text primary key,
+  sheet text not null,
+  row_idx integer not null,
+  responsavel text,
+  atribuido_por text,
+  atribuido_em timestamptz,
+  historico jsonb not null default '[]'::jsonb,
+  atualizado_em timestamptz not null default now()
+);
+
+alter table public.atribuicoes enable row level security;
+
+create policy "leitura publica" on public.atribuicoes for select using (true);
+create policy "insercao publica" on public.atribuicoes for insert with check (true);
+create policy "atualizacao publica" on public.atribuicoes for update using (true);
+
+alter publication supabase_realtime add table public.atribuicoes;
+```
