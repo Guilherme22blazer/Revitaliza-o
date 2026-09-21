@@ -814,8 +814,10 @@ async function iaAnalyze(){
     });
     const data = await res.json();
     clearInterval(stepTimer);
-    if(!res.ok || data.error){
-      body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise. '+escapeHtml(data.error||'Tente novamente.')+'</div>';
+    if(!res.ok || data.error || !data.analysis){
+      const detail = data.error || data.detail || (data.raw?String(data.raw).slice(0,300):'') || JSON.stringify(data).slice(0,300);
+      body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise.<br><small>'+escapeHtml(detail)+'</small></div>';
+      console.warn('IA analyze: resposta inesperada', data);
       return;
     }
     const key = sheet+'|'+idx;
