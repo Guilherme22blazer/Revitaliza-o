@@ -172,6 +172,15 @@ function labelFor(s){ return SHEET_LABELS[s] || s.replace(/_/g,' '); }
 const edits     = JSON.parse(localStorage.getItem('emtel_edits')||'{}');
 const deletes   = new Set(JSON.parse(localStorage.getItem('emtel_dels')||'[]'));
 const validated = new Set(JSON.parse(localStorage.getItem('emtel_val')||'[]'));
+// data/hora da última alteração de cada registro (edição, validação ou exclusão)
+const timestamps = JSON.parse(localStorage.getItem('emtel_ts')||'{}');
+function touchTimestamp(key){ timestamps[key] = new Date().toISOString(); }
+function fmtTimestamp(key){
+  const t = timestamps[key];
+  if(!t) return '';
+  const d = new Date(t);
+  return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
 // produtos importados via planilha Excel (persistente) — chave: nome da aba -> array de linhas
 const imported  = JSON.parse(localStorage.getItem('emtel_imported')||'{}');
 let importedStorageReady = false;
@@ -187,6 +196,7 @@ function persist(){
   store('emtel_edits',JSON.stringify(edits));
   store('emtel_dels',JSON.stringify([...deletes]));
   store('emtel_val',JSON.stringify([...validated]));
+  store('emtel_ts',JSON.stringify(timestamps));
   if(typeof window.persistMovementSnapshot==='function')window.persistMovementSnapshot();
 }
 // total de linhas "virtuais" da aba (originais + importadas)
@@ -527,6 +537,8 @@ function drawRows(sheet){
       ? '<span class="pill" style="background:#d1fae5;color:#047857">✓ Validado</span>'
       : (isDup ? '<span class="pill" style="background:#fee;color:var(--vermelho)">Repetido</span>'
                : '<span class="pill">Pendente</span>');
+    const tsTxt = fmtTimestamp(key);
+    const statusBadgeWithTs = statusBadge + (tsTxt?`<br><small style="color:var(--muted)">${tsTxt}</small>`:'');
     const isDescriptionDuplicate = sheet==='Descricoes_Duplicadas';
     const descriptionValue = f.descIdx>=0 ? String(row[f.descIdx]||'') : String(row[0]||'');
     const encodedDescription = encodeURIComponent(descriptionValue);
@@ -537,7 +549,7 @@ function drawRows(sheet){
       ? `<button class="e" onclick="goTo(MAIN_SHEET,{desc:decodeURIComponent('${encodedDescription}')})">Ver filiais</button>`
       : `<button class="e" onclick="openModal('${sheet}',${i})">Editar</button>`;
     html += `<tr class="${cls}" onclick="${rowAction}">`+
-            `<td onclick="event.stopPropagation()">${statusBadge}</td>`+
+            `<td onclick="event.stopPropagation()">${statusBadgeWithTs}</td>`+
             row.map(c=>`<td>${escapeHtml(c)}</td>`).join('')+
             `<td onclick="event.stopPropagation()"><div class="act">`+
             `<button class="v" onclick="toggleValidate('${sheet}',${i})" title="Validar">${isVal?'↺ Desfazer':'✓ Validar'}</button>`+
@@ -554,6 +566,7 @@ function toggleValidate(sheet, idx){
   const shouldValidate=!validated.has(key);
   if(shouldValidate) validated.add(key);
   else validated.delete(key);
+  touchTimestamp(key);
   if((sheet==='NCM_Mesma_Descricao'||sheet==='Descricoes_Duplicadas')&&typeof window.syncAnalyticalValidation==='function'){
     window.syncAnalyticalValidation(sheet,idx,shouldValidate);
   }
@@ -585,7 +598,8 @@ function openModal(sheet, idx){
   const key = sheet+'|'+idx;
   const row = edits[key]?[...edits[key]]:[...rawRow(sheet, idx)];
   modalCtx = {sheet, idx, row};
-  document.getElementById('mTitle').textContent = `Editar — ${labelFor(sheet)}`;
+  const tsTxt = fmtTimestamp(key);
+  document.getElementById('mTitle').textContent = `Editar — ${labelFor(sheet)}` + (tsTxt?` (última alteração: ${tsTxt})`:'');
   document.getElementById('mBody').innerHTML = d.headers.map((h,i)=>`
     <div class="fld"><label>${h}</label>${(String(row[i]||'').length>50?'<textarea':'<input')} data-i="${i}" value="${escapeHtml(row[i])}">${escapeHtml(row[i])}${(String(row[i]||'').length>50?'</textarea>':'')}</div>
   `).join('');
@@ -598,17 +612,20 @@ function saveModal(){
   const newRow = [...modalCtx.row];
   inputs.forEach(el=>{ newRow[+el.dataset.i] = el.value; });
   edits[modalCtx.sheet+'|'+modalCtx.idx] = newRow;
+  touchTimestamp(modalCtx.sheet+'|'+modalCtx.idx);
   persist(); closeModal(); render();
 }
 function deleteCurrent(){
   if(!modalCtx) return;
   if(!confirm('Excluir este registro do painel?')) return;
   deletes.add(modalCtx.sheet+'|'+modalCtx.idx);
+  touchTimestamp(modalCtx.sheet+'|'+modalCtx.idx);
   persist(); closeModal(); render();
 }
 function deleteRow(sheet, idx){
   if(!confirm('Excluir este registro?')) return;
   deletes.add(sheet+'|'+idx);
+  touchTimestamp(sheet+'|'+idx);
   persist(); render();
 }
 
@@ -632,7 +649,7 @@ function bulkDeleteDuplicates(sheet){
     if(deletes.has(sheet+'|'+i)) continue;
     const r = getRow(sheet,i);
     const key = descIdx>=0 && ncmIdx>=0 ? (r[descIdx]+'||'+r[ncmIdx]) : r.join('||');
-    if(seen.has(key)) deletes.add(sheet+'|'+i); else seen.set(key,i);
+    if(seen.has(key)) { deletes.add(sheet+'|'+i); touchTimestamp(sheet+'|'+i); } else seen.set(key,i);
   }
   persist(); render();
 }
@@ -840,6 +857,7 @@ async function resetAll(){
   if(!confirm('Resetar TODAS as edições, exclusões, validações e produtos importados?')) return;
   Object.keys(edits).forEach(k=>delete edits[k]);
   Object.keys(imported).forEach(k=>delete imported[k]);
+  Object.keys(timestamps).forEach(k=>delete timestamps[k]);
   deletes.clear();validated.clear();await saveImportedToDB();persist();render();
 }
 function restoreRow(key){ deletes.delete(key); persist(); render(); }
