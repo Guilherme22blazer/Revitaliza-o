@@ -603,19 +603,25 @@ function drawRows(sheet){
     const tsTxt = fmtTimestamp(key);
     const statusBadgeWithTs = statusBadge + (tsTxt?`<br><small style="color:var(--muted)">${tsTxt}</small>`:'');
     const isDescriptionDuplicate = sheet==='Descricoes_Duplicadas';
-    const descriptionValue = f.descIdx>=0 ? String(row[f.descIdx]||'') : String(row[0]||'');
+    const isNcmMesmaDescricao = sheet==='NCM_Mesma_Descricao';
+    const descriptionValue = f.descIdx>=0 ? String(row[f.descIdx]||'') : String(row[isNcmMesmaDescricao?1:0]||'');
     const encodedDescription = encodeURIComponent(descriptionValue);
-    const rowAction = isDescriptionDuplicate
-      ? `goTo(MAIN_SHEET,{desc:decodeURIComponent('${encodedDescription}')})`
+    const goToArgs = isNcmMesmaDescricao
+      ? `{ncm:decodeURIComponent('${encodeURIComponent(String(row[0]||''))}'),desc:decodeURIComponent('${encodedDescription}')}`
+      : `{desc:decodeURIComponent('${encodedDescription}')}`;
+    const rowAction = (isDescriptionDuplicate||isNcmMesmaDescricao)
+      ? `goTo(MAIN_SHEET,${goToArgs})`
       : `openModal('${sheet}',${i})`;
-    const detailButton = isDescriptionDuplicate
-      ? `<button class="e" onclick="goTo(MAIN_SHEET,{desc:decodeURIComponent('${encodedDescription}')})">Ver filiais</button>`
+    const detailButton = (isDescriptionDuplicate||isNcmMesmaDescricao)
+      ? `<button class="e" onclick="goTo(MAIN_SHEET,${goToArgs})">Ver produtos</button>`
       : `<button class="e" onclick="openModal('${sheet}',${i})">Editar</button>`;
+    const validateButton = isNcmMesmaDescricao ? '' :
+      `<button class="v" onclick="toggleValidate('${sheet}',${i})" title="Validar">${isVal?'↺ Desfazer':'✓ Validar'}</button>`;
     html += `<tr class="${cls}" onclick="${rowAction}">`+
             `<td onclick="event.stopPropagation()">${statusBadgeWithTs}</td>`+
             row.map(c=>`<td>${escapeHtml(c)}</td>`).join('')+
             `<td onclick="event.stopPropagation()"><div class="act">`+
-            `<button class="v" onclick="toggleValidate('${sheet}',${i})" title="Validar">${isVal?'↺ Desfazer':'✓ Validar'}</button>`+
+            validateButton+
             detailButton+
             `<button class="x" onclick="deleteRow('${sheet}',${i})">Excluir</button>`+
             `</div></td></tr>`;
