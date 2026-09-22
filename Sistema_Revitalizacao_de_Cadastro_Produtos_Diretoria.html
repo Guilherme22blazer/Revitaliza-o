@@ -394,6 +394,7 @@ function assignmentCounts(sheet){
 function assignmentPanelHtml(sheet){
   if(sheet!=='NCM_Mesma_Descricao' && sheet!=='Descricoes_Duplicadas') return '';
   const {counts, total} = assignmentCounts(sheet);
+  const st = computeStats(sheet); // val/total aqui contam por LINHA da aba, não pela quantidade (Qtd) de produtos do grupo
   const chip = u=>`<button class="assign-filter" data-user="${u.id}" style="--chip-color:${u.cor}" onclick="setAssignmentFilter('${sheet}','${u.id}')">${u.emoji} ${escapeHtml(u.nome)}<b>${counts[u.id]}</b></button>`;
   return `
     <div class="panel assign-panel">
@@ -401,6 +402,7 @@ function assignmentPanelHtml(sheet){
       <div class="assign-stats">
         ${TASK_USERS.map(u=>`<div class="assign-stat" style="--chip-color:${u.cor}"><span>${u.emoji} ${escapeHtml(u.nome)}</span><b>${counts[u.id]}</b></div>`).join('')}
         <div class="assign-stat assign-total"><span>Total</span><b>${total}</b></div>
+        <div class="assign-stat assign-total" style="--chip-color:#16a34a"><span>✅ Finalizadas (por linha)</span><b>${st.val} / ${st.total}</b></div>
       </div>
       <div class="assign-filters" id="assignFilters">
         <button class="assign-filter active" data-user="" onclick="setAssignmentFilter('${sheet}','')">Todos</button>
@@ -850,6 +852,7 @@ function toggleValidate(sheet, idx){
   drawRows(sheet);
   // atualiza cards do topo e os dados usados pelo dashboard
   renderSheetCardsOnly(sheet);
+  refreshAssignmentPanel(sheet);
 }
 function renderSheetCardsOnly(sheet){
   const st = computeStats(sheet);
