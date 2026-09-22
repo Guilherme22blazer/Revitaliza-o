@@ -101,7 +101,11 @@
     try{
       const { data, error } = await supa.from('desativacoes').select('*');
       if(error){ console.warn('Supabase load (desativacoes) falhou:', error.message); return; }
+      const remoteKeys=new Set(data.map(r=>r.key));
       data.forEach(applyRemoteDesativacao);
+      // registros separados antes da sincronização com o Supabase existir (ou antes da
+      // tabela ser criada) ficaram só neste navegador — sobe eles agora para o banco.
+      deactivationReport.forEach(item=>{ if(!remoteKeys.has(item.key)) desativacaoUpsert(item); });
       saveDeactivationReport();
       render();
     }catch(e){ console.warn('Falha ao carregar desativações do Supabase:', e); }
