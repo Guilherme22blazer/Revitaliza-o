@@ -68,14 +68,68 @@
   function log(action,idx,detail){const u=requireUser();if(!u)return false;const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),fi=d.headers.findIndex(h=>/filial|loja|unidade/i.test(h));history.unshift({user:u,ts:new Date().toISOString(),filial:String(r[fi]??'—'),action,description,detail});safeLocalSet('emtel_duplicate_history',JSON.stringify(history.slice(0,1000)));queueMovementSnapshot();return true}
   function saveDeactivationReport(){safeLocalSet('emtel_deactivation_report',JSON.stringify(deactivationReport.slice(0,2000)));queueMovementSnapshot()}
   function saveActiveReport(){safeLocalSet('emtel_active_report',JSON.stringify(activeReport.slice(0,2000)));queueMovementSnapshot()}
+  // ===== Supabase: Relatório de Desativação compartilhado entre usuários =====
+  function desativacaoRowFromItem(item){
+    return {
+      key:item.key, idx:item.idx, codigo:item.code, codigo_item:item.itemCode,
+      descricao:item.description, filial:item.branch, ncm:item.ncm, tipo:item.type,
+      unidade:item.unit, grupo:item.group, criado_em_origem:item.createdAt,
+      motivo:item.reason||null, selecionado_em:item.selectedAt||null,
+      usuario:item.user||null, status:item.status, concluido_em:item.completedAt||null,
+      atualizado_em:new Date().toISOString()
+    };
+  }
+  function desativacaoUpsert(item){
+    if(typeof supa==='undefined'||!supa) return;
+    supa.from('desativacoes').upsert(desativacaoRowFromItem(item)).then(({error})=>{ if(error) console.warn('Supabase upsert (desativacoes) falhou:', error.message); });
+  }
+  function desativacaoDelete(key){
+    if(typeof supa==='undefined'||!supa) return;
+    supa.from('desativacoes').delete().eq('key', key).then(({error})=>{ if(error) console.warn('Supabase delete (desativacoes) falhou:', error.message); });
+  }
+  function applyRemoteDesativacao(row){
+    const item={key:row.key, idx:row.idx, code:row.codigo, itemCode:row.codigo_item, description:row.descricao, branch:row.filial, ncm:row.ncm, type:row.tipo, unit:row.unidade, group:row.grupo, createdAt:row.criado_em_origem, reason:row.motivo, selectedAt:row.selecionado_em, user:row.usuario, status:row.status, completedAt:row.concluido_em};
+    const pos=deactivationReport.findIndex(x=>x.key===row.key);
+    if(pos>=0) deactivationReport[pos]=item; else deactivationReport.unshift(item);
+    if(item.status==='Selecionado') selectedForDeletion.add(Number(item.idx)); else selectedForDeletion.delete(Number(item.idx));
+  }
+  function removeLocalDesativacao(key){
+    for(let i=deactivationReport.length-1;i>=0;i--) if(deactivationReport[i].key===key){ selectedForDeletion.delete(Number(deactivationReport[i].idx)); deactivationReport.splice(i,1); }
+  }
+  async function loadDesativacaoFromSupabase(){
+    if(typeof supa==='undefined'||!supa) return;
+    try{
+      const { data, error } = await supa.from('desativacoes').select('*');
+      if(error){ console.warn('Supabase load (desativacoes) falhou:', error.message); return; }
+      data.forEach(applyRemoteDesativacao);
+      saveDeactivationReport();
+      render();
+    }catch(e){ console.warn('Falha ao carregar desativações do Supabase:', e); }
+  }
+  function subscribeDesativacaoRealtime(){
+    if(typeof supa==='undefined'||!supa) return;
+    supa.channel('desativacoes-changes')
+      .on('postgres_changes', {event:'*', schema:'public', table:'desativacoes'}, payload=>{
+        if(payload.eventType==='DELETE'){
+          const key = payload.old && payload.old.key; if(!key) return;
+          removeLocalDesativacao(key);
+        } else {
+          applyRemoteDesativacao(payload.new);
+        }
+        saveDeactivationReport(); render();
+      })
+      .subscribe();
+  }
+  window.loadDesativacaoFromSupabase = loadDesativacaoFromSupabase;
+  window.subscribeDesativacaoRealtime = subscribeDesativacaoRealtime;
   function reportKey(idx){return MAIN_SHEET+'|'+idx}
   function reportProductData(idx){
     const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),find=re=>d.headers.findIndex(h=>re.test(String(h)));
     const ci=find(/^codigo$|^código$/i),ii=find(/cod\.?\s*item|código\s*do\s*item|codigo\s*do\s*item/i),di=find(/descric|descr|produto|nome/i),fi=find(/filial|loja|unidade/i),ni=find(/NCM|IPI/i),ti=find(/^tipo$/i),ui=find(/^unidade$|^um$|^un$/i),gi=find(/^grupo$/i),dti=find(/data.*cri|cria[çc][aã]o|inclus[aã]o/i);
     return {code:String(r[ci]??'—'),itemCode:String(r[ii]??'—'),description:String(r[di]??''),branch:String(r[fi]??'—'),ncm:String(r[ni]??'—'),type:String(r[ti]??'—'),unit:String(r[ui]??'—'),group:String(r[gi]??'—'),createdAt:String(r[dti]??'Não informado')};
   }
-  function addToDeactivationReport(idx,reason){const key=reportKey(idx),data=reportProductData(idx),existing=deactivationReport.find(x=>x.key===key&&x.status==='Selecionado');if(existing){Object.assign(existing,data,{reason,selectedAt:new Date().toISOString(),user:user()})}else{deactivationReport.unshift(Object.assign({key,idx},data,{reason,selectedAt:new Date().toISOString(),user:user(),status:'Selecionado'}))}saveDeactivationReport()}
-  function removeFromDeactivationReport(idx){for(let i=deactivationReport.length-1;i>=0;i--)if(deactivationReport[i].key===reportKey(idx)&&deactivationReport[i].status==='Selecionado')deactivationReport.splice(i,1);saveDeactivationReport()}
+  function addToDeactivationReport(idx,reason){const key=reportKey(idx),data=reportProductData(idx),existing=deactivationReport.find(x=>x.key===key&&x.status==='Selecionado');let item;if(existing){Object.assign(existing,data,{reason,selectedAt:new Date().toISOString(),user:user()});item=existing}else{item=Object.assign({key,idx},data,{reason,selectedAt:new Date().toISOString(),user:user(),status:'Selecionado'});deactivationReport.unshift(item)}saveDeactivationReport();desativacaoUpsert(item)}
+  function removeFromDeactivationReport(idx){const key=reportKey(idx);for(let i=deactivationReport.length-1;i>=0;i--)if(deactivationReport[i].key===key&&deactivationReport[i].status==='Selecionado')deactivationReport.splice(i,1);saveDeactivationReport();desativacaoDelete(key)}
   function addToActiveReport(idx,decision){const key=reportKey(idx),item=Object.assign({key,idx},reportProductData(idx),{decision:decision||'Validado – Manter Ativo',validatedAt:new Date().toISOString(),user:user()});const pos=activeReport.findIndex(x=>x.key===key);if(pos>=0)activeReport[pos]=item;else activeReport.unshift(item);saveActiveReport()}
   function removeFromActiveReport(idx){for(let i=activeReport.length-1;i>=0;i--)if(activeReport[i].key===reportKey(idx))activeReport.splice(i,1);saveActiveReport()}
   window.syncAnalyticalValidation=function(sheet,idx,shouldValidate){
@@ -177,7 +231,7 @@
     render();
     toast('Separação desfeita e cadastro removido do relatório.');
   };
-  window.deleteSelectedReview=function(){const chosen=[...selectedForDeletion].filter(i=>isActive(MAIN_SHEET,i));if(!chosen.length)return;if(!requireUser())return;const principals=principalsByBranch(indices()),blocked=chosen.filter(i=>principals.has(i)&&!validated.has(MAIN_SHEET+'|'+i));if(blocked.length){alert('Existem cadastros principais selecionados que ainda não foram validados. Valide-os antes da exclusão.');return}if(!confirm('Confirma a exclusão de '+chosen.length+' registro(s) separado(s)? A ação será registrada no histórico.'))return;chosen.forEach(idx=>{const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h));log('Exclusão de registro separado',idx,'Código '+r[ci]+' excluído após triagem');deletes.add(MAIN_SHEET+'|'+idx);touchTimestamp(MAIN_SHEET+'|'+idx);const item=deactivationReport.find(x=>x.key===reportKey(idx)&&x.status==='Selecionado');if(item){item.status='Desativado';item.completedAt=new Date().toISOString()}});saveDeactivationReport();selectedForDeletion.clear();persist();render();toast('Registros selecionados excluídos e registrados no relatório.')};
+  window.deleteSelectedReview=function(){const chosen=[...selectedForDeletion].filter(i=>isActive(MAIN_SHEET,i));if(!chosen.length)return;if(!requireUser())return;const principals=principalsByBranch(indices()),blocked=chosen.filter(i=>principals.has(i)&&!validated.has(MAIN_SHEET+'|'+i));if(blocked.length){alert('Existem cadastros principais selecionados que ainda não foram validados. Valide-os antes da exclusão.');return}if(!confirm('Confirma a exclusão de '+chosen.length+' registro(s) separado(s)? A ação será registrada no histórico.'))return;const touched=[];chosen.forEach(idx=>{const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h));log('Exclusão de registro separado',idx,'Código '+r[ci]+' excluído após triagem');deletes.add(MAIN_SHEET+'|'+idx);touchTimestamp(MAIN_SHEET+'|'+idx);const item=deactivationReport.find(x=>x.key===reportKey(idx)&&x.status==='Selecionado');if(item){item.status='Desativado';item.completedAt=new Date().toISOString();touched.push(item)}});saveDeactivationReport();touched.forEach(desativacaoUpsert);selectedForDeletion.clear();persist();render();toast('Registros selecionados excluídos e registrados no relatório.')};
   function installEditTracking(){const body=document.getElementById('mBody');if(!body||editContext===null)return;body.querySelectorAll('[data-i]').forEach(input=>{input.addEventListener('input',()=>{const changed=String(input.value)!==String(editOriginalRow[+input.dataset.i]??'');input.closest('.fld').classList.toggle('field-changed',changed)})});const box=document.createElement('section');box.className='edit-tracking';box.innerHTML='<h4>Rastreabilidade da alteração</h4><p>Os campos modificados serão identificados automaticamente. Marque o Protheus somente depois de confirmar que a atualização também foi realizada no ERP.</p><div class="edit-tracking-options"><label class="edit-status-option"><input type="checkbox" id="editPlatformStatus" checked disabled> Alterado na plataforma</label><label class="edit-status-option"><input type="checkbox" id="editProtheusStatus"> Atualizado no Protheus</label></div>';body.appendChild(box)}
   window.editReviewRecord=function(idx){if(!requireUser())return;const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial/i.test(h));if(!confirm('Deseja alterar o cadastro '+r[ci]+' da Filial '+r[fi]+'?'))return;editContext=idx;editOriginalRow=[...r];openModal(MAIN_SHEET,idx);installEditTracking()};
   window.deleteReviewRecord=function(idx){if(!requireUser())return;const list=indices(),principals=principalsByBranch(list),d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial/i.test(h));if(principals.has(idx)&&!validated.has(MAIN_SHEET+'|'+idx)){alert('Valide o cadastro principal desta filial antes de excluí-lo.');return}if(!confirm('Confirma a exclusão do cadastro '+r[ci]+' da Filial '+r[fi]+'?'))return;log('Exclusão de registro',idx,'Código '+r[ci]+' excluído');deletes.add(MAIN_SHEET+'|'+idx);touchTimestamp(MAIN_SHEET+'|'+idx);persist();render();toast('Registro excluído e histórico atualizado.')};
@@ -253,6 +307,7 @@
     if(wasCompleted)deletes.delete(key);
     deactivationReport.splice(pos,1);
     saveDeactivationReport();
+    desativacaoDelete(key);
     touchTimestamp(key);
     persist();
     log(wasCompleted?'Cadastro restaurado pelo relatório':'Separação desfeita pelo relatório',idx,wasCompleted?'Cadastro restaurado e removido do Relatório de Desativação':'Produto removido do Relatório de Desativação');
@@ -284,4 +339,7 @@
   window.render=function(){ensureReportNav();if(productReviewMode&&current!==MAIN_SHEET)productReviewMode=false;if(productReviewMode&&current===MAIN_SHEET){activeBtn();return renderDuplicateReview(document.getElementById('main'))}if(current===MAIN_SHEET){activeBtn();return renderModernProducts(document.getElementById('main'))}if(current==='dashboard'){activeBtn();return renderExecutiveDashboard(document.getElementById('main'))}if(current==='activeReport'){activeBtn();return renderActiveReport(document.getElementById('main'))}if(current==='deactivationReport'){activeBtn();return renderDeactivationReport(document.getElementById('main'))}originalRender();ensureReportNav();if(current==='Descricoes_Duplicadas'||current==='NCM_Mesma_Descricao'){const sourceSheet=current,tb=document.getElementById('tbody'),source=DATA[sourceSheet],descriptionIndex=source?source.headers.findIndex(h=>/descric|descr|produto|nome/i.test(h)):-1;if(tb&&descriptionIndex>=0&&!tb.dataset.reviewBound){tb.dataset.reviewBound='1';tb.addEventListener('click',function(e){if(e.target.closest('button,input,label,a,select,option'))return;const tr=e.target.closest('tr');if(!tr||!tb.contains(tr))return;const descCell=tr.children[descriptionIndex+1];if(!descCell)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();openDuplicateReview(descCell.textContent.trim())},true)}}};
   render();
   restoreMovementSnapshot();
+  loadDesativacaoFromSupabase();
+  subscribeDesativacaoRealtime();
+  setInterval(loadDesativacaoFromSupabase, 8000);
 })();

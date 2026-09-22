@@ -102,3 +102,40 @@ alter publication supabase_realtime add table public.validacoes;
 ```
 
 Depois disso, validar/editar/excluir um produto aparece pros outros usuários quase instantaneamente, sem esperar o ciclo de 20s.
+
+## 8. Compartilhar o Relatório de Desativação entre usuários
+
+Até aqui, o "Relatório de Desativação" (aba de produtos separados para desativar) ficava salvo só no navegador de quem fez a seleção. Rode no **SQL Editor** para criar a tabela compartilhada:
+
+```sql
+create table public.desativacoes (
+  key text primary key,
+  idx integer not null,
+  codigo text,
+  codigo_item text,
+  descricao text,
+  filial text,
+  ncm text,
+  tipo text,
+  unidade text,
+  grupo text,
+  criado_em_origem text,
+  motivo text,
+  selecionado_em timestamptz,
+  usuario text,
+  status text not null,
+  concluido_em timestamptz,
+  atualizado_em timestamptz not null default now()
+);
+
+alter table public.desativacoes enable row level security;
+
+create policy "leitura publica" on public.desativacoes for select using (true);
+create policy "insercao publica" on public.desativacoes for insert with check (true);
+create policy "atualizacao publica" on public.desativacoes for update using (true);
+create policy "exclusao publica" on public.desativacoes for delete using (true);
+
+alter publication supabase_realtime add table public.desativacoes;
+```
+
+A partir dessa migração, toda vez que alguém clicar em "Separar para Desativação", informar o motivo e confirmar, o registro (com nome de quem separou e o motivo) aparece em tempo real no Relatório de Desativação de todos os usuários — e desfazer/concluir a desativação também sincroniza.
