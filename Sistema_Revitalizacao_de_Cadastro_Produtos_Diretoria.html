@@ -126,6 +126,8 @@ header p{font-size:13px;margin-top:6px;opacity:.82}
 .header-meta{margin-left:auto;display:flex;align-items:center;gap:10px;z-index:1}
 .status-chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);border-radius:999px;font-size:12px;font-weight:700;backdrop-filter:blur(8px)}
 .status-chip i{width:8px;height:8px;background:#53e5ad;border-radius:50%;box-shadow:0 0 0 4px rgba(83,229,173,.15)}
+.user-name-input{padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;font-size:12px;font-weight:700;backdrop-filter:blur(8px);width:150px}
+.user-name-input::placeholder{color:rgba(255,255,255,.75)}
 nav{top:104px;padding:0 30px;gap:8px;border:0;box-shadow:0 5px 16px rgba(20,46,86,.07)}
 nav button{padding:16px 17px;font-size:13px;border-bottom-width:3px}
 nav button.active{background:linear-gradient(180deg,#fff,#f5f8ff);color:var(--azul2)}
@@ -180,7 +182,7 @@ header img#logo{width:176px;height:64px;min-width:176px;object-fit:contain;objec
 <body>
 <header>
   <img id="logo" alt="Emtel"/>
-  <div><h1>RevitaCad</h1><p>Revitalização inteligente de produtos e fornecedores</p></div><div class="header-meta"><div class="status-chip"><i></i> Base operacional ativa</div></div>
+  <div><h1>RevitaCad</h1><p>Revitalização inteligente de produtos e fornecedores</p></div><div class="header-meta"><input id="userNameInput" class="user-name-input" placeholder="👤 Seu nome" oninput="setReviewUserName(this.value)"><div class="status-chip"><i></i> Base operacional ativa</div></div>
 </header>
 <nav id="nav"></nav>
 <main id="main"></main>
@@ -300,10 +302,20 @@ const TASK_USERS = [
 const assignments = JSON.parse(localStorage.getItem('emtel_assignments')||'{}');
 function taskUserById(id){ return TASK_USERS.find(u=>u.id===id) || null; }
 function reviewUserName(){ return (localStorage.getItem('emtel_review_user')||'').trim(); }
+function setReviewUserName(v){
+  localStorage.setItem('emtel_review_user', (v||'').trim());
+}
 function ensureReviewUserName(){
   let u = reviewUserName();
-  if(!u){ u = (prompt('Informe seu nome para registrar esta alteração:')||'').trim(); if(u) localStorage.setItem('emtel_review_user', u); }
-  return u;
+  if(u) return u;
+  try{ u = (prompt('Informe seu nome para registrar esta alteração:')||'').trim(); }catch(e){ u=''; }
+  if(u){
+    localStorage.setItem('emtel_review_user', u);
+    const el = document.getElementById('userNameInput');
+    if(el) el.value = u;
+  }
+  // nunca bloqueia a ação: sem nome informado, registra como "Anônimo"
+  return u || 'Anônimo';
 }
 function assignmentsStore(){
   const value = JSON.stringify(assignments);
@@ -1622,6 +1634,7 @@ function renderProtheus(m){
 }
 protheusEnsureTimer();
 
+(function(){ const el=document.getElementById('userNameInput'); if(el) el.value = reviewUserName(); })();
 render();
 loadImportedFromDB();
 loadStateFromSupabase();
