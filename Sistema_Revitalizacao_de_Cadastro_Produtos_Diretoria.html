@@ -779,8 +779,9 @@ function drawRows(sheet){
     shown++;
     if(shown>max){ html+=`<tr><td colspan="${d.headers.length+2}" style="text-align:center;padding:14px;color:var(--muted)">Mostrando primeiros ${max} resultados. Refine sua busca.</td></tr>`; break; }
     const cls = (edits[key]?'edited ':'') + (isVal?'val ':'');
+    const validadoPor = isVal && lastEditors[key] ? ` — ${escapeHtml(lastEditors[key])}` : '';
     const statusBadge = isVal
-      ? '<span class="pill" style="background:#d1fae5;color:#047857">✓ Validado</span>'
+      ? `<span class="pill" style="background:#d1fae5;color:#047857">✓ Validado${validadoPor}</span>`
       : (isDup ? '<span class="pill" style="background:#fee;color:var(--vermelho)">Repetido</span>'
                : '<span class="pill">Pendente</span>');
     const tsTxt = fmtTimestamp(key);
