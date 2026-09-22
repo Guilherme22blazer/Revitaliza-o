@@ -92,3 +92,13 @@ alter table public.validacoes add column if not exists usuario text;
 ```
 
 A partir dessa mudança, toda ação que altera um registro (editar, excluir, validar, desfazer) pede o nome de quem está fazendo e grava junto — visível para todos os usuários.
+
+## 7. Ativar tempo real na tabela `validacoes` (corrige o atraso de até 20s)
+
+A tabela `validacoes` foi criada sem entrar na publicação de Realtime do Supabase — por isso as atualizações de outros usuários só apareciam pela revalidação periódica (a cada 20s), em vez de instantâneas. Rode no **SQL Editor**:
+
+```sql
+alter publication supabase_realtime add table public.validacoes;
+```
+
+Depois disso, validar/editar/excluir um produto aparece pros outros usuários quase instantaneamente, sem esperar o ciclo de 20s.
