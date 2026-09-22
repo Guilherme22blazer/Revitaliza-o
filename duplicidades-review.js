@@ -101,7 +101,11 @@
     try{
       const { data, error } = await supa.from('desativacoes').select('*');
       if(error){ console.warn('Supabase load (desativacoes) falhou:', error.message); return; }
+      const remoteKeys=new Set(data.map(r=>r.key));
       data.forEach(applyRemoteDesativacao);
+      // registros separados antes da sincronização com o Supabase existir (ou antes da
+      // tabela ser criada) ficaram só neste navegador — sobe eles agora para o banco.
+      deactivationReport.forEach(item=>{ if(!remoteKeys.has(item.key)) desativacaoUpsert(item); });
       saveDeactivationReport();
       render();
     }catch(e){ console.warn('Falha ao carregar desativações do Supabase:', e); }
@@ -207,7 +211,12 @@
   window.undoReviewValidation=function(idx){if(!requireUser()||!confirm('Deseja desfazer a decisão de manter este cadastro ativo?'))return;validated.delete(MAIN_SHEET+'|'+idx);removeFromActiveReport(idx);touchTimestamp(MAIN_SHEET+'|'+idx);log('Validação desfeita',idx,'Decisão de manter ativo removida');persist();render();toast('Validação e registro no relatório foram desfeitos.')};
   window.toggleReviewDeletion=function(idx,checked,checkbox){
     if(checked){
-      if(!requireUser()){if(checkbox)checkbox.checked=false;return}
+      const sugestao=requireUser();
+      const nome=(prompt('Informe seu nome para registrar esta desativação:', sugestao==='Anônimo'?'':sugestao)||'').trim();
+      if(!nome){if(checkbox)checkbox.checked=false;return}
+      setUser(nome);
+      if(typeof window.setReviewUserName==='function') window.setReviewUserName(nome);
+      const nameInput=document.getElementById('userNameInput'); if(nameInput) nameInput.value=nome;
       const reason=(prompt('Informe o motivo da desativação deste cadastro:')||'').trim();
       if(!reason){if(checkbox)checkbox.checked=false;return}
       validated.delete(MAIN_SHEET+'|'+idx);
