@@ -226,6 +226,8 @@ const deletes   = new Set(JSON.parse(localStorage.getItem('emtel_dels')||'[]'));
 const validated = new Set(JSON.parse(localStorage.getItem('emtel_val')||'[]'));
 // data/hora da última alteração de cada registro (edição, validação ou exclusão)
 const timestamps = JSON.parse(localStorage.getItem('emtel_ts')||'{}');
+// quem fez a última alteração de cada registro
+const lastEditors = JSON.parse(localStorage.getItem('emtel_editors')||'{}');
 
 // ===== Supabase: banco de dados compartilhado das validações/edições/exclusões =====
 const SUPABASE_URL = 'https://chgiayjwhhkyjaykguyv.supabase.co';
@@ -241,6 +243,7 @@ function supabaseUpsert(key){
     validado: validated.has(key),
     excluido: deletes.has(key),
     edicao: edits[key] || null,
+    usuario: lastEditors[key] || null,
     atualizado_em: timestamps[key] || new Date().toISOString()
   }).then(({error})=>{ if(error) console.warn('Supabase upsert falhou:', error.message); });
 }
@@ -251,6 +254,7 @@ function applyRemoteRow(row){
   if(row.validado) validated.add(key); else validated.delete(key);
   if(row.edicao) edits[key] = row.edicao; else delete edits[key];
   if(row.atualizado_em) timestamps[key] = row.atualizado_em;
+  if(row.usuario) lastEditors[key] = row.usuario;
 }
 
 async function loadStateFromSupabase(){
@@ -270,7 +274,7 @@ function subscribeSupabaseRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'validacoes'}, payload=>{
       if(payload.eventType==='DELETE'){
         const key = payload.old && payload.old.key; if(!key) return;
-        deletes.delete(key); validated.delete(key); delete edits[key]; delete timestamps[key];
+        deletes.delete(key); validated.delete(key); delete edits[key]; delete timestamps[key]; delete lastEditors[key];
       } else {
         applyRemoteRow(payload.new);
       }
@@ -279,7 +283,12 @@ function subscribeSupabaseRealtime(){
     .subscribe();
 }
 
-function touchTimestamp(key){ timestamps[key] = new Date().toISOString(); supabaseUpsert(key); }
+function touchTimestamp(key){
+  timestamps[key] = new Date().toISOString();
+  const quem = ensureReviewUserName();
+  if(quem) lastEditors[key] = quem;
+  supabaseUpsert(key);
+}
 
 // ===== Atribuição de tarefas por usuário (NCM Mesma Descrição / Descrições Duplicadas) =====
 const TASK_USERS = [
@@ -293,7 +302,7 @@ function taskUserById(id){ return TASK_USERS.find(u=>u.id===id) || null; }
 function reviewUserName(){ return (localStorage.getItem('emtel_review_user')||'').trim(); }
 function ensureReviewUserName(){
   let u = reviewUserName();
-  if(!u){ u = (prompt('Informe seu nome para registrar esta atribuição:')||'').trim(); if(u) localStorage.setItem('emtel_review_user', u); }
+  if(!u){ u = (prompt('Informe seu nome para registrar esta alteração:')||'').trim(); if(u) localStorage.setItem('emtel_review_user', u); }
   return u;
 }
 function assignmentsStore(){
@@ -407,7 +416,9 @@ function fmtTimestamp(key){
   const t = timestamps[key];
   if(!t) return '';
   const d = new Date(t);
-  return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const quando = d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const quem = lastEditors[key];
+  return quem ? quando+' — '+quem : quando;
 }
 // produtos importados via planilha Excel (persistente) — chave: nome da aba -> array de linhas
 const imported  = JSON.parse(localStorage.getItem('emtel_imported')||'{}');
@@ -425,6 +436,7 @@ function persist(){
   store('emtel_dels',JSON.stringify([...deletes]));
   store('emtel_val',JSON.stringify([...validated]));
   store('emtel_ts',JSON.stringify(timestamps));
+  store('emtel_editors',JSON.stringify(lastEditors));
   if(typeof window.persistMovementSnapshot==='function')window.persistMovementSnapshot();
 }
 // total de linhas "virtuais" da aba (originais + importadas)
