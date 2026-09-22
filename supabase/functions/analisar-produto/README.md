@@ -139,3 +139,28 @@ alter publication supabase_realtime add table public.desativacoes;
 ```
 
 A partir dessa migração, toda vez que alguém clicar em "Separar para Desativação", informar o motivo e confirmar, o registro (com nome de quem separou e o motivo) aparece em tempo real no Relatório de Desativação de todos os usuários — e desfazer/concluir a desativação também sincroniza.
+
+## 9. Compartilhar o Histórico de ações entre usuários
+
+O painel "Histórico desta análise" (nas telas de comparação de produtos) também ficava salvo só no navegador de quem fez a ação. Rode no **SQL Editor**:
+
+```sql
+create table public.historico_acoes (
+  id text primary key,
+  usuario text,
+  criado_em timestamptz not null default now(),
+  filial text,
+  acao text,
+  descricao text,
+  detalhe text
+);
+
+alter table public.historico_acoes enable row level security;
+
+create policy "leitura publica" on public.historico_acoes for select using (true);
+create policy "insercao publica" on public.historico_acoes for insert with check (true);
+
+alter publication supabase_realtime add table public.historico_acoes;
+```
+
+A partir dessa migração, qualquer ação registrada no histórico (validar, editar, excluir, separar para desativação, desfazer etc.) de qualquer usuário aparece para todos, em tempo real.
