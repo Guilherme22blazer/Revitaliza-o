@@ -82,3 +82,13 @@ create policy "atualizacao publica" on public.atribuicoes for update using (true
 
 alter publication supabase_realtime add table public.atribuicoes;
 ```
+
+## 6. Registrar o nome do usuário em toda edição/exclusão/validação
+
+Adiciona uma coluna `usuario` na tabela `validacoes` (já criada antes, em outro passo). Rode no **SQL Editor**:
+
+```sql
+alter table public.validacoes add column if not exists usuario text;
+```
+
+A partir dessa mudança, toda ação que altera um registro (editar, excluir, validar, desfazer) pede o nome de quem está fazendo e grava junto — visível para todos os usuários.
