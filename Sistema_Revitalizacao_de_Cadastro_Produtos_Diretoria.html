@@ -259,12 +259,28 @@ function applyRemoteRow(row){
   if(row.usuario) lastEditors[key] = row.usuario;
 }
 
+// itens validados antes do nome do responsável ser registrado (ou sem Realtime na época)
+// ficam sem "usuario" salvo; aqui preenchemos com "Anônimo" para o selo sempre mostrar alguém.
+function backfillValidatedNames(){
+  let changed = false;
+  validated.forEach(key=>{
+    if(!lastEditors[key]){
+      lastEditors[key] = 'Anônimo';
+      if(!timestamps[key]) timestamps[key] = new Date().toISOString();
+      changed = true;
+      supabaseUpsert(key);
+    }
+  });
+  if(changed) persist();
+}
+
 async function loadStateFromSupabase(){
   if(!supa) return;
   try{
     const { data, error } = await supa.from('validacoes').select('*');
     if(error){ console.warn('Supabase load falhou:', error.message); return; }
     data.forEach(applyRemoteRow);
+    backfillValidatedNames();
     persist();
     render();
   }catch(e){ console.warn('Falha ao carregar dados do Supabase:', e); }
@@ -1638,6 +1654,7 @@ function renderProtheus(m){
 protheusEnsureTimer();
 
 (function(){ const el=document.getElementById('userNameInput'); if(el) el.value = reviewUserName(); })();
+backfillValidatedNames();
 render();
 loadImportedFromDB();
 loadStateFromSupabase();
@@ -1653,6 +1670,6 @@ setInterval(()=>{if(current==='dashboard'){const el=document.querySelector('.exe
 setInterval(()=>{ if(current==='protheus') renderProtheus(document.getElementById('main')); }, 15000);
 </script>
 
-<script src="duplicidades-review.js?v=20260921-fix-clique-select-atribuir"></script>
+<script src="duplicidades-review.js?v=20260922-fix-nome-validador"></script>
 <script src="tema-relogio.js"></script>
 </body></html>
