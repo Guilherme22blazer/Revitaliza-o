@@ -424,8 +424,16 @@ function assignmentPanelHtml(sheet){
         <button class="assign-filter active" data-user="" onclick="setAssignmentFilter('${sheet}','')">Todos</button>
         ${TASK_USERS.map(chip).join('')}
         <button class="assign-filter" data-user="mine" onclick="setAssignmentFilter('${sheet}','mine')">⭐ Minhas tarefas</button>
+        <button class="assign-filter assign-pending${currentFilters.onlyPending?' active':''}" onclick="togglePendingAssignmentFilter('${sheet}')">⏳ Pendentes<b>${st.pend}</b></button>
       </div>
     </div>`;
+}
+function togglePendingAssignmentFilter(sheet){
+  currentFilters.onlyPending = !currentFilters.onlyPending;
+  const box = document.getElementById('fPend');
+  if(box){ box.checked = currentFilters.onlyPending; }
+  document.querySelectorAll('#assignFilters .assign-pending').forEach(b=>b.classList.toggle('active', currentFilters.onlyPending));
+  drawRows(sheet);
 }
 function refreshAssignmentPanel(sheet){
   const el = document.getElementById('assignPanelSlot');
@@ -791,6 +799,7 @@ function renderSheet(m, sheet){
     currentFilters.onlyDup       = document.getElementById('fDup').checked;
     currentFilters.onlyValidated = document.getElementById('fVal').checked;
     currentFilters.onlyPending   = document.getElementById('fPend').checked;
+    document.querySelectorAll('#assignFilters .assign-pending').forEach(b=>b.classList.toggle('active', currentFilters.onlyPending));
     drawRows(sheet);
   };
   ['search','fFilial','fNcm','fDesc'].forEach(id=>{
@@ -1708,5 +1717,5 @@ setInterval(()=>{ if(current==='protheus') renderProtheus(document.getElementByI
 </script>
 
 <script src="duplicidades-review.js?v=20260923-fix-scroll-sync"></script>
-<script src="tema-relogio.js"></script>
+<script src="tema-relogio.js?v=20260923-mantem-input-nome"></script>
 </body></html>
