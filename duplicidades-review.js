@@ -65,7 +65,44 @@
   function indices(){const d=DATA[MAIN_SHEET],di=d.headers.findIndex(h=>/descric|descr|produto|nome/i.test(h)),target=description.trim().toUpperCase(),out=[];for(let i=0;i<rowCount(MAIN_SHEET);i++){if(String(getRow(MAIN_SHEET,i)[di]||'').trim().toUpperCase()===target)out.push(i)}return out}
   function numberCode(v){const x=String(v??'').replace(/\D/g,'');return x?Number(x):Number.MAX_SAFE_INTEGER}
   function principalsByBranch(list){const d=DATA[MAIN_SHEET],ci=d.headers.findIndex(h=>/^codigo$|^código$/i.test(h)),fi=d.headers.findIndex(h=>/filial|loja|unidade/i.test(h)),groups=new Map();list.filter(i=>isActive(MAIN_SHEET,i)).forEach(i=>{const branch=String(getRow(MAIN_SHEET,i)[fi]??'—');if(!groups.has(branch))groups.set(branch,[]);groups.get(branch).push(i)});const result=new Set();groups.forEach(items=>{if(items.length>=2){items.sort((a,b)=>numberCode(getRow(MAIN_SHEET,a)[ci])-numberCode(getRow(MAIN_SHEET,b)[ci])||a-b);result.add(items[0])}});return result}
-  function log(action,idx,detail){const u=requireUser();if(!u)return false;const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),fi=d.headers.findIndex(h=>/filial|loja|unidade/i.test(h));history.unshift({user:u,ts:new Date().toISOString(),filial:String(r[fi]??'—'),action,description,detail});safeLocalSet('emtel_duplicate_history',JSON.stringify(history.slice(0,1000)));queueMovementSnapshot();return true}
+  function genId(){try{return crypto.randomUUID()}catch(e){return 'h-'+Date.now()+'-'+Math.random().toString(36).slice(2)}}
+  function log(action,idx,detail){const u=requireUser();if(!u)return false;const d=DATA[MAIN_SHEET],r=getRow(MAIN_SHEET,idx),fi=d.headers.findIndex(h=>/filial|loja|unidade/i.test(h));const entry={id:genId(),user:u,ts:new Date().toISOString(),filial:String(r[fi]??'—'),action,description,detail};history.unshift(entry);safeLocalSet('emtel_duplicate_history',JSON.stringify(history.slice(0,1000)));queueMovementSnapshot();historicoInsert(entry);return true}
+  // ===== Supabase: Histórico de ações compartilhado entre usuários =====
+  function historicoInsert(entry){
+    if(typeof supa==='undefined'||!supa) return;
+    supa.from('historico_acoes').upsert({id:entry.id, usuario:entry.user, criado_em:entry.ts, filial:entry.filial, acao:entry.action, descricao:entry.description, detalhe:entry.detail||null}).then(({error})=>{ if(error) console.warn('Supabase upsert (historico_acoes) falhou:', error.message); });
+  }
+  function applyRemoteHistorico(row){
+    if(history.some(x=>x.id===row.id)) return;
+    history.push({id:row.id, user:row.usuario, ts:row.criado_em, filial:row.filial, action:row.acao, description:row.descricao, detail:row.detalhe});
+  }
+  function resortHistorico(){history.sort((a,b)=>new Date(b.ts)-new Date(a.ts));safeLocalSet('emtel_duplicate_history',JSON.stringify(history.slice(0,1000)))}
+  async function loadHistoricoFromSupabase(){
+    if(typeof supa==='undefined'||!supa) return;
+    try{
+      const { data, error } = await supa.from('historico_acoes').select('*').order('criado_em',{ascending:false}).limit(1000);
+      if(error){ console.warn('Supabase load (historico_acoes) falhou:', error.message); return; }
+      const remoteIds=new Set(data.map(r=>r.id));
+      data.forEach(applyRemoteHistorico);
+      // envia pro banco entradas locais (criadas antes da sincronização, sem id ou ainda não enviadas)
+      history.forEach(entry=>{ if(!entry.id) entry.id=genId(); if(!remoteIds.has(entry.id)) historicoInsert(entry); });
+      resortHistorico();
+      softRender();
+    }catch(e){ console.warn('Falha ao carregar histórico do Supabase:', e); }
+  }
+  function subscribeHistoricoRealtime(){
+    if(typeof supa==='undefined'||!supa) return;
+    supa.channel('historico-changes')
+      .on('postgres_changes', {event:'INSERT', schema:'public', table:'historico_acoes'}, payload=>{
+        applyRemoteHistorico(payload.new);
+        resortHistorico();
+        softRender();
+      })
+      .subscribe();
+  }
+  // re-render em segundo plano (sincronização/Realtime) sem "pular" a página: usa
+  // renderPreserveState() do script principal quando disponível (preserva rolagem/busca/foco).
+  function softRender(){ if(typeof renderPreserveState==='function') renderPreserveState(); else render(); }
   function saveDeactivationReport(){safeLocalSet('emtel_deactivation_report',JSON.stringify(deactivationReport.slice(0,2000)));queueMovementSnapshot()}
   function saveActiveReport(){safeLocalSet('emtel_active_report',JSON.stringify(activeReport.slice(0,2000)));queueMovementSnapshot()}
   // ===== Supabase: Relatório de Desativação compartilhado entre usuários =====
@@ -107,7 +144,7 @@
       // tabela ser criada) ficaram só neste navegador — sobe eles agora para o banco.
       deactivationReport.forEach(item=>{ if(!remoteKeys.has(item.key)) desativacaoUpsert(item); });
       saveDeactivationReport();
-      render();
+      softRender();
     }catch(e){ console.warn('Falha ao carregar desativações do Supabase:', e); }
   }
   function subscribeDesativacaoRealtime(){
@@ -120,7 +157,7 @@
         } else {
           applyRemoteDesativacao(payload.new);
         }
-        saveDeactivationReport(); render();
+        saveDeactivationReport(); softRender();
       })
       .subscribe();
   }
@@ -351,4 +388,7 @@
   loadDesativacaoFromSupabase();
   subscribeDesativacaoRealtime();
   setInterval(loadDesativacaoFromSupabase, 8000);
+  loadHistoricoFromSupabase();
+  subscribeHistoricoRealtime();
+  setInterval(loadHistoricoFromSupabase, 8000);
 })();
