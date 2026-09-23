@@ -1005,7 +1005,10 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 // A chave fica só no localStorage deste navegador (Configurações), nunca no
 // código-fonte do site — cada usuário que for usar a IA cola sua própria chave
 // grátis gerada em https://aistudio.google.com/apikey.
-const GEMINI_MODEL = 'gemini-3.6-flash';
+// "-latest" é o alias oficial do Google que sempre aponta pro modelo flash estável do
+// momento — evita quebrar de novo quando o Google descontinuar/trocar a versão numerada.
+// Mantém gemini-3.6-flash como 2ª opção e volta pro 2.0 como último recurso.
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.0-flash'];
 const GEMINI_SYSTEM_PROMPT = `Você é um assistente fiscal especializado em classificação de mercadorias (NCM) e cadastro de produtos no Brasil.
 
 Sua função é AUDITAR o cadastro de um produto e apontar problemas de descrição, possíveis divergências de NCM e outros dados fiscais, SEMPRE como sugestão — nunca como decisão definitiva.
@@ -1160,42 +1163,49 @@ async function iaAnalyze(){
   const product = iaProductFields(sheet, idx);
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
   const loadingMsg = document.querySelector('.ia-loading b');
-  let res, rawText, attempt = 0;
-  const maxAttempts = 3, backoffs = [0, 1800, 3500];
-  for(;;){
-    try{
-      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-        method:'POST',
-        headers:{'content-type':'application/json','x-goog-api-key':apiKey},
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
-          contents: [{ role:'user', parts: [{ text: iaBuildUserPrompt(product) }] }],
-          generationConfig: { maxOutputTokens: 1500, responseMimeType: 'application/json' }
-        })
-      });
-    }catch(networkErr){
-      clearInterval(stepTimer);
-      body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).<br><small>'+escapeHtml(String(networkErr))+'</small></div>';
-      console.warn('IA analyze: falha de rede', networkErr);
-      return;
+  const requestBody = JSON.stringify({
+    system_instruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
+    contents: [{ role:'user', parts: [{ text: iaBuildUserPrompt(product) }] }],
+    generationConfig: { maxOutputTokens: 1500, responseMimeType: 'application/json' }
+  });
+  let res, rawText, networkFailed = false;
+  // tenta cada modelo da lista (com repetição em 503) antes de desistir — se um modelo
+  // estiver sobrecarregado ou tiver sido descontinuado, cai pro próximo automaticamente.
+  modelLoop:
+  for(const model of GEMINI_MODELS){
+    const maxAttempts = 2, backoffs = [0, 1500];
+    for(let attempt=0; attempt<maxAttempts; attempt++){
+      if(attempt>0 && loadingMsg) loadingMsg.textContent = 'Servidor da IA ocupado, tentando de novo...';
+      if(GEMINI_MODELS.indexOf(model)>0 && attempt===0 && loadingMsg) loadingMsg.textContent = 'Tentando modelo alternativo da IA...';
+      if(attempt>0) await sleep(backoffs[attempt]);
+      try{
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method:'POST',
+          headers:{'content-type':'application/json','x-goog-api-key':apiKey},
+          body: requestBody
+        });
+      }catch(networkErr){
+        networkFailed = true;
+        console.warn('IA analyze: falha de rede', networkErr);
+        break modelLoop;
+      }
+      networkFailed = false;
+      if(res.status===503 || res.status===404) continue; // tenta de novo / próximo modelo
+      break modelLoop;
     }
-    // 503 = modelo sobrecarregado no momento; tenta de novo automaticamente antes de desistir
-    if(res.status===503 && attempt<maxAttempts-1){
-      attempt++;
-      if(loadingMsg) loadingMsg.textContent = 'Servidor da IA ocupado, tentando de novo ('+attempt+'/'+(maxAttempts-1)+')...';
-      await sleep(backoffs[attempt]);
-      continue;
-    }
-    break;
+  }
+  clearInterval(stepTimer);
+  if(networkFailed || !res){
+    body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).</div>';
+    return;
   }
   rawText = await res.text();
-  clearInterval(stepTimer);
   if(!res.ok){
     let msg = rawText.slice(0,300);
     try{ const j = JSON.parse(rawText); msg = (j.error && j.error.message) || msg; }catch(e){}
     const hint = res.status===400 ? ' Verifique se a chave colada em Configurações está correta.'
       : res.status===429 ? ' Cota gratuita do Gemini atingida — tente novamente em instantes.'
-      : res.status===404 ? ' O modelo "'+GEMINI_MODEL+'" pode ter sido descontinuado pelo Google — avise para atualizar o GEMINI_MODEL no código.'
+      : (res.status===503||res.status===404) ? ' Todos os modelos de IA testados estão indisponíveis no momento — tente novamente em alguns minutos.'
       : '';
     body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div>';
     console.warn('IA analyze: erro da API Gemini', res.status, rawText);
