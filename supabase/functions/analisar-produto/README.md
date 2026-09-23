@@ -1,5 +1,13 @@
 # Deploy da função `analisar-produto`
 
+> **Atualização:** a partir de agora a "IA Fiscal" do site chama a API do
+> Google Gemini **diretamente do navegador** (Configurações → "IA Fiscal
+> (Google Gemini)"), sem depender mais desta Edge Function — isso evita o
+> erro recorrente de "falha de rede/CORS" quando a função ficava desatualizada
+> ou fora do ar. Os passos abaixo (seções 2 a 4) não são mais necessários
+> para a IA funcionar; a **seção 1** (tabela `analises_ia`, usada só para
+> guardar o histórico de análises) continua valendo.
+
 ## 1. Criar a tabela de histórico
 
 No Supabase, **SQL Editor → New query**, rode:

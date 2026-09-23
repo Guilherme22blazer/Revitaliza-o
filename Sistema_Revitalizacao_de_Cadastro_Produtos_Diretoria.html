@@ -994,7 +994,49 @@ function openModal(sheet, idx){
 function closeModal(){document.getElementById('modal').classList.remove('show');modalCtx=null;}
 
 // ===== IA Fiscal: painel de auditoria de produtos =====
-const IA_FUNCTION_URL = SUPABASE_URL + '/functions/v1/analisar-produto';
+// Chama a API do Google Gemini diretamente do navegador (sem Edge Function):
+// evita o erro recorrente de "falha de rede/CORS" por função não publicada.
+// A chave fica só no localStorage deste navegador (Configurações), nunca no
+// código-fonte do site — cada usuário que for usar a IA cola sua própria chave
+// grátis gerada em https://aistudio.google.com/apikey.
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_SYSTEM_PROMPT = `Você é um assistente fiscal especializado em classificação de mercadorias (NCM) e cadastro de produtos no Brasil.
+
+Sua função é AUDITAR o cadastro de um produto e apontar problemas de descrição, possíveis divergências de NCM e outros dados fiscais, SEMPRE como sugestão — nunca como decisão definitiva.
+
+Regras obrigatórias:
+- Nunca invente vigência, extinção ou alteração oficial de NCM: você não tem acesso a uma base fiscal oficial atualizada nesta análise. Diga isso claramente no campo "fontes".
+- Baseie suas sugestões de NCM no seu conhecimento geral da tabela NCM/TIPI e no raciocínio sobre a descrição e demais campos do produto, mas deixe claro que é uma sugestão que REQUER VALIDAÇÃO por um responsável fiscal.
+- Se as informações do produto forem insuficientes para uma classificação segura, diga isso explicitamente e não force uma sugestão de NCM.
+- "confianca" é sua estimativa de 0 a 100 de quão bem a descrição/dados sustentam a classificação sugerida — nunca invente um número preciso sem justificativa coerente.
+- Responda ESTRITAMENTE em JSON válido, sem nenhum texto fora do JSON, seguindo exatamente este formato:
+
+{
+  "diagnostico": {"cadastro": "verde|amarelo|vermelho", "descricao": "verde|amarelo|vermelho", "ncm": "verde|amarelo|vermelho"},
+  "ncm_atual": {"status": "compativel|necessita_validacao|possivel_incorreto", "justificativa": "..."},
+  "ncm_sugerido": [
+    {"codigo": "00000000", "descricao": "...", "confianca": 0, "justificativa": "..."}
+  ],
+  "descricao_problema": "...ou null se a descrição já estiver adequada",
+  "descricao_sugerida": "...ou null se não houver sugestão melhor",
+  "alertas": [
+    {"nivel": "verde|amarelo|vermelho", "texto": "..."}
+  ],
+  "recomendacoes": "...",
+  "fontes": "explicação curta de que a sugestão usa conhecimento geral do modelo sobre a tabela NCM/TIPI, sem confirmação em base fiscal oficial atualizada nesta análise; oriente validação com um responsável fiscal antes de aplicar."
+}
+
+"ncm_sugerido" deve ter no máximo 3 itens, ordenados do mais para o menos aderente. Se o NCM atual já parecer correto, pode devolver uma lista vazia.
+Nunca inclua texto, markdown ou comentários fora do objeto JSON.`;
+function geminiApiKey(){ return (localStorage.getItem('emtel_gemini_key')||'').trim(); }
+function setGeminiApiKey(v){ localStorage.setItem('emtel_gemini_key', (v||'').trim()); }
+function iaBuildUserPrompt(product){
+  const lines = Object.entries(product)
+    .filter(([,v])=>v!==null && v!==undefined && String(v).trim()!=='')
+    .slice(0,40)
+    .map(([k,v])=>String(k).slice(0,100)+': '+String(v).slice(0,500));
+  return 'Audite o seguinte cadastro de produto e responda no formato JSON definido nas instruções do sistema.\n\nDados do produto:\n'+lines.join('\n');
+}
 let iaCtx = null;
 const iaHistory = JSON.parse(localStorage.getItem('emtel_ia_history')||'[]');
 function iaStoreHistory(){
@@ -1082,10 +1124,15 @@ function renderIaDrawer(){
 }
 
 async function iaAnalyze(){
-  if(!iaCtx || !supa) return;
+  if(!iaCtx) return;
   const {sheet, idx} = iaCtx;
   const body = document.getElementById('iaBody');
   if(!body) return;
+  const apiKey = geminiApiKey();
+  if(!apiKey){
+    body.innerHTML = '<div class="ia-error">Nenhuma chave do Google Gemini configurada neste navegador.<br><small>Vá em <b>Configurações</b> → "IA Fiscal (Google Gemini)", gere uma chave grátis em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> e cole ali.</small></div>';
+    return;
+  }
   const steps = ['Lendo cadastro','Analisando descrição','Verificando NCM','Comparando classificação','Verificando informações fiscais','Gerando recomendações'];
   body.innerHTML = '<div class="ia-loading"><b>Analisando produto...</b><ul>'+steps.map(s=>`<li>${escapeHtml(s)}</li>`).join('')+'</ul></div>';
   const liList = body.querySelectorAll('.ia-loading li');
@@ -1094,43 +1141,56 @@ async function iaAnalyze(){
   const product = iaProductFields(sheet, idx);
   let res;
   try{
-    res = await fetch(IA_FUNCTION_URL, {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_ANON_KEY,'apikey':SUPABASE_ANON_KEY},
-      body: JSON.stringify({product})
+      headers:{'content-type':'application/json','x-goog-api-key':apiKey},
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
+        contents: [{ role:'user', parts: [{ text: iaBuildUserPrompt(product) }] }],
+        generationConfig: { maxOutputTokens: 1500, responseMimeType: 'application/json' }
+      })
     });
   }catch(networkErr){
     clearInterval(stepTimer);
-    body.innerHTML = '<div class="ia-error">Não foi possível conectar à função de IA (falha de rede/CORS).<br><small>'+escapeHtml(String(networkErr))+'</small><br><small>URL: '+escapeHtml(IA_FUNCTION_URL)+'</small></div>';
+    body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).<br><small>'+escapeHtml(String(networkErr))+'</small></div>';
     console.warn('IA analyze: falha de rede', networkErr);
     return;
   }
   const rawText = await res.text();
   clearInterval(stepTimer);
-  let data;
-  try{
-    data = JSON.parse(rawText);
-  }catch(parseErr){
-    body.innerHTML = '<div class="ia-error">A função respondeu em formato inesperado (status '+res.status+').<br><small>'+escapeHtml(rawText.slice(0,300)||'(resposta vazia)')+'</small></div>';
-    console.warn('IA analyze: resposta não é JSON', rawText);
+  if(!res.ok){
+    let msg = rawText.slice(0,300);
+    try{ const j = JSON.parse(rawText); msg = (j.error && j.error.message) || msg; }catch(e){}
+    const hint = res.status===400 ? ' Verifique se a chave colada em Configurações está correta.' : (res.status===429 ? ' Cota gratuita do Gemini atingida — tente novamente em instantes.' : '');
+    body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div>';
+    console.warn('IA analyze: erro da API Gemini', res.status, rawText);
     return;
   }
-  if(!res.ok || data.error || !data.analysis){
-    const detail = data.error || data.detail || JSON.stringify(data).slice(0,300);
-    body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').<br><small>'+escapeHtml(detail)+'</small></div>';
-    console.warn('IA analyze: resposta inesperada', data);
+  let geminiJson;
+  try{ geminiJson = JSON.parse(rawText); }catch(e){
+    body.innerHTML = '<div class="ia-error">A IA respondeu em formato inesperado.<br><small>'+escapeHtml(rawText.slice(0,300))+'</small></div>';
+    return;
+  }
+  const rawAnalysisText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  let analysis;
+  try{
+    const match = rawAnalysisText.match(/\{[\s\S]*\}/);
+    analysis = JSON.parse(match ? match[0] : rawAnalysisText);
+  }catch(parseErr){
+    body.innerHTML = '<div class="ia-error">A IA respondeu em um formato inesperado.<br><small>'+escapeHtml(rawAnalysisText.slice(0,300)||'(resposta vazia)')+'</small></div>';
+    console.warn('IA analyze: resposta não é JSON', rawAnalysisText);
     return;
   }
   const key = sheet+'|'+idx;
   const {codigo, descricao} = iaProductLabel(sheet, idx);
   const ncmIdx = iaNcmIdx(sheet);
   const ncmAtual = ncmIdx>=0 ? String(getRow(sheet, idx)[ncmIdx]??'') : '';
-  const sugestoes = Array.isArray(data.analysis.ncm_sugerido)?data.analysis.ncm_sugerido:[];
-  const entry = {key, sheet, idx, codigo, descricao, user:iaUserName(), ts:new Date().toISOString(), ncmAnterior:ncmAtual, ncmSugerido:(sugestoes[0]?sugestoes[0].codigo:''), result:data.analysis, applied:false};
+  const sugestoes = Array.isArray(analysis.ncm_sugerido)?analysis.ncm_sugerido:[];
+  const entry = {key, sheet, idx, codigo, descricao, user:iaUserName(), ts:new Date().toISOString(), ncmAnterior:ncmAtual, ncmSugerido:(sugestoes[0]?sugestoes[0].codigo:''), result:analysis, applied:false};
   iaHistory.unshift(entry);
   iaStoreHistory();
   iaSyncHistory(entry);
-  body.innerHTML = iaResultHtml(data.analysis);
+  body.innerHTML = iaResultHtml(analysis);
 }
 
 function iaApplyNcm(codigo){
@@ -1350,6 +1410,15 @@ function renderConfig(m){
   const valList  = [...validated];
   const importedCount = Object.values(imported).reduce((acc,arr)=>acc+arr.length,0);
   m.innerHTML = `
+    <div class="panel">
+      <h2>🤖 IA Fiscal (Google Gemini)</h2>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:10px">A análise por IA roda direto no navegador, sem depender de servidor. Gere uma chave <b>grátis</b> (sem cartão de crédito) em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> e cole abaixo. A chave fica salva só neste navegador — cada pessoa que for usar a IA precisa colar a sua.</p>
+      <div class="toolbar">
+        <input type="password" id="geminiKeyInput" placeholder="Cole aqui sua chave do Gemini (começa com AIza...)" value="${escapeHtml(geminiApiKey())}" style="flex:1 1 320px">
+        <button class="btn" onclick="const v=document.getElementById('geminiKeyInput').value; setGeminiApiKey(v); iaToast(v.trim()?'Chave salva neste navegador.':'Chave removida.');">💾 Salvar chave</button>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin-top:6px">${geminiApiKey()?'✅ Chave configurada neste navegador.':'⚠️ Nenhuma chave configurada — a análise por IA não vai funcionar até salvar uma.'}</p>
+    </div>
     <div class="panel">
       <h2>Backup, Importação & Exportação</h2>
       <p style="color:var(--muted);font-size:13px;margin-bottom:14px">Salve todas as decisões, históricos, relatórios, produtos importados e parâmetros do sistema em um único arquivo de backup.</p>
