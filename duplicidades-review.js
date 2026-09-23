@@ -136,8 +136,7 @@
   async function loadDesativacaoFromSupabase(){
     if(typeof supa==='undefined'||!supa) return;
     try{
-      const { data, error } = await supa.from('desativacoes').select('*');
-      if(error){ console.warn('Supabase load (desativacoes) falhou:', error.message); return; }
+      const data = typeof fetchAllRows==='function' ? await fetchAllRows('desativacoes') : (await supa.from('desativacoes').select('*')).data||[];
       const remoteKeys=new Set(data.map(r=>r.key));
       data.forEach(applyRemoteDesativacao);
       // registros separados antes da sincronização com o Supabase existir (ou antes da
