@@ -98,7 +98,7 @@
         resortHistorico();
         softRender();
       })
-      .subscribe();
+      .subscribe(status=>{ if(typeof reportRealtimeStatus==='function') reportRealtimeStatus('historico', status); });
   }
   // re-render em segundo plano (sincronização/Realtime) sem "pular" a página: usa
   // renderPreserveState() do script principal quando disponível (preserva rolagem/busca/foco).
@@ -159,7 +159,7 @@
         }
         saveDeactivationReport(); softRender();
       })
-      .subscribe();
+      .subscribe(status=>{ if(typeof reportRealtimeStatus==='function') reportRealtimeStatus('desativacoes', status); });
   }
   window.loadDesativacaoFromSupabase = loadDesativacaoFromSupabase;
   window.subscribeDesativacaoRealtime = subscribeDesativacaoRealtime;
