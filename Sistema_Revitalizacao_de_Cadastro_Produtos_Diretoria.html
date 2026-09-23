@@ -999,7 +999,7 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 // A chave fica só no localStorage deste navegador (Configurações), nunca no
 // código-fonte do site — cada usuário que for usar a IA cola sua própria chave
 // grátis gerada em https://aistudio.google.com/apikey.
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-3.6-flash';
 const GEMINI_SYSTEM_PROMPT = `Você é um assistente fiscal especializado em classificação de mercadorias (NCM) e cadastro de produtos no Brasil.
 
 Sua função é AUDITAR o cadastro de um produto e apontar problemas de descrição, possíveis divergências de NCM e outros dados fiscais, SEMPRE como sugestão — nunca como decisão definitiva.
@@ -1161,7 +1161,10 @@ async function iaAnalyze(){
   if(!res.ok){
     let msg = rawText.slice(0,300);
     try{ const j = JSON.parse(rawText); msg = (j.error && j.error.message) || msg; }catch(e){}
-    const hint = res.status===400 ? ' Verifique se a chave colada em Configurações está correta.' : (res.status===429 ? ' Cota gratuita do Gemini atingida — tente novamente em instantes.' : '');
+    const hint = res.status===400 ? ' Verifique se a chave colada em Configurações está correta.'
+      : res.status===429 ? ' Cota gratuita do Gemini atingida — tente novamente em instantes.'
+      : res.status===404 ? ' O modelo "'+GEMINI_MODEL+'" pode ter sido descontinuado pelo Google — avise para atualizar o GEMINI_MODEL no código.'
+      : '';
     body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div>';
     console.warn('IA analyze: erro da API Gemini', res.status, rawText);
     return;
