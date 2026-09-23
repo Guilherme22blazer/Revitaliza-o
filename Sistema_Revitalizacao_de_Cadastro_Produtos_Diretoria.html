@@ -282,7 +282,7 @@ async function loadStateFromSupabase(){
     data.forEach(applyRemoteRow);
     backfillValidatedNames();
     persist();
-    render();
+    renderPreserveState();
   }catch(e){ console.warn('Falha ao carregar dados do Supabase:', e); }
 }
 
@@ -296,7 +296,7 @@ function subscribeSupabaseRealtime(){
       } else {
         applyRemoteRow(payload.new);
       }
-      persist(); render();
+      persist(); renderPreserveState();
     })
     .subscribe();
 }
@@ -365,7 +365,7 @@ async function loadAssignmentsFromSupabase(){
     if(error){ console.warn('Supabase load (atribuicoes) falhou:', error.message); return; }
     data.forEach(applyRemoteAssignment);
     assignmentsStore();
-    render();
+    renderPreserveState();
   }catch(e){ console.warn('Falha ao carregar atribuições do Supabase:', e); }
 }
 function subscribeAssignmentsRealtime(){
@@ -378,7 +378,7 @@ function subscribeAssignmentsRealtime(){
       } else {
         applyRemoteAssignment(payload.new);
       }
-      assignmentsStore(); render();
+      assignmentsStore(); renderPreserveState();
     })
     .subscribe();
 }
@@ -594,6 +594,43 @@ function render(){
   if(current==='config')    return renderConfig(m);
   if(current==='protheus')  return renderProtheus(m);
   return renderSheet(m, current);
+}
+
+// re-render usado pelas sincronizações em segundo plano (Supabase/Realtime/polling):
+// preserva rolagem, texto de busca/filtros digitados e o foco atual, para não
+// "pular" a página nem apagar o que o usuário está digitando/selecionando.
+function renderPreserveState(){
+  const scrollX = window.scrollX, scrollY = window.scrollY;
+  const active = document.activeElement;
+  const activeId = active && active.id;
+  const isTextInput = active && active.tagName==='INPUT' && (active.type==='text'||active.type===undefined||active.type==='search');
+  const selStart = isTextInput && typeof active.selectionStart==='number' ? active.selectionStart : null;
+  const selEnd   = isTextInput && typeof active.selectionEnd==='number'   ? active.selectionEnd   : null;
+  const fieldIds = ['search','fFilial','fNcm','fDesc'];
+  const checkIds = ['fDup','fVal','fPend'];
+  const fieldVals = {}; fieldIds.forEach(id=>{ const el=document.getElementById(id); if(el && el.value) fieldVals[id]=el.value; });
+  const checkVals = {}; checkIds.forEach(id=>{ const el=document.getElementById(id); if(el) checkVals[id]=el.checked; });
+
+  render();
+
+  fieldIds.forEach(id=>{ const el=document.getElementById(id); if(el && fieldVals[id]!==undefined) el.value=fieldVals[id]; });
+  checkIds.forEach(id=>{ const el=document.getElementById(id); if(el && checkVals[id]!==undefined) el.checked=checkVals[id]; });
+  const hasRestoredFilter = Object.keys(fieldVals).length || Object.values(checkVals).some(v=>v);
+  if(hasRestoredFilter){
+    if(fieldVals.search)  currentFilters.q      = fieldVals.search.toLowerCase();
+    if(fieldVals.fFilial) currentFilters.filial = fieldVals.fFilial.toLowerCase();
+    if(fieldVals.fNcm)    currentFilters.ncm    = fieldVals.fNcm.toLowerCase();
+    if(fieldVals.fDesc)   currentFilters.desc   = fieldVals.fDesc.toLowerCase();
+    if(checkVals.fDup!==undefined) currentFilters.onlyDup       = checkVals.fDup;
+    if(checkVals.fVal!==undefined) currentFilters.onlyValidated = checkVals.fVal;
+    if(checkVals.fPend!==undefined) currentFilters.onlyPending  = checkVals.fPend;
+    if(typeof drawRows==='function' && document.getElementById('tbody')) drawRows(current);
+  }
+  if(activeId){
+    const el=document.getElementById(activeId);
+    if(el){ el.focus({preventScroll:true}); if(selStart!=null && el.setSelectionRange){ try{el.setSelectionRange(selStart, selEnd)}catch(e){} } }
+  }
+  window.scrollTo(scrollX, scrollY);
 }
 
 // ===== RESUMO (cards clicáveis) =====
@@ -1670,6 +1707,6 @@ setInterval(()=>{if(current==='dashboard'){const el=document.querySelector('.exe
 setInterval(()=>{ if(current==='protheus') renderProtheus(document.getElementById('main')); }, 15000);
 </script>
 
-<script src="duplicidades-review.js?v=20260922-sync-historico"></script>
+<script src="duplicidades-review.js?v=20260923-fix-scroll-sync"></script>
 <script src="tema-relogio.js"></script>
 </body></html>

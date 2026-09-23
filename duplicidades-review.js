@@ -87,7 +87,7 @@
       // envia pro banco entradas locais (criadas antes da sincronização, sem id ou ainda não enviadas)
       history.forEach(entry=>{ if(!entry.id) entry.id=genId(); if(!remoteIds.has(entry.id)) historicoInsert(entry); });
       resortHistorico();
-      render();
+      softRender();
     }catch(e){ console.warn('Falha ao carregar histórico do Supabase:', e); }
   }
   function subscribeHistoricoRealtime(){
@@ -96,10 +96,13 @@
       .on('postgres_changes', {event:'INSERT', schema:'public', table:'historico_acoes'}, payload=>{
         applyRemoteHistorico(payload.new);
         resortHistorico();
-        render();
+        softRender();
       })
       .subscribe();
   }
+  // re-render em segundo plano (sincronização/Realtime) sem "pular" a página: usa
+  // renderPreserveState() do script principal quando disponível (preserva rolagem/busca/foco).
+  function softRender(){ if(typeof renderPreserveState==='function') renderPreserveState(); else render(); }
   function saveDeactivationReport(){safeLocalSet('emtel_deactivation_report',JSON.stringify(deactivationReport.slice(0,2000)));queueMovementSnapshot()}
   function saveActiveReport(){safeLocalSet('emtel_active_report',JSON.stringify(activeReport.slice(0,2000)));queueMovementSnapshot()}
   // ===== Supabase: Relatório de Desativação compartilhado entre usuários =====
@@ -141,7 +144,7 @@
       // tabela ser criada) ficaram só neste navegador — sobe eles agora para o banco.
       deactivationReport.forEach(item=>{ if(!remoteKeys.has(item.key)) desativacaoUpsert(item); });
       saveDeactivationReport();
-      render();
+      softRender();
     }catch(e){ console.warn('Falha ao carregar desativações do Supabase:', e); }
   }
   function subscribeDesativacaoRealtime(){
@@ -154,7 +157,7 @@
         } else {
           applyRemoteDesativacao(payload.new);
         }
-        saveDeactivationReport(); render();
+        saveDeactivationReport(); softRender();
       })
       .subscribe();
   }
