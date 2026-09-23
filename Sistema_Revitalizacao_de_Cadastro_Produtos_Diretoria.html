@@ -125,7 +125,9 @@ header h1{font-size:25px;line-height:1.15;letter-spacing:-.35px}
 header p{font-size:13px;margin-top:6px;opacity:.82}
 .header-meta{margin-left:auto;display:flex;align-items:center;gap:10px;z-index:1}
 .status-chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);border-radius:999px;font-size:12px;font-weight:700;backdrop-filter:blur(8px)}
-.status-chip i{width:8px;height:8px;background:#53e5ad;border-radius:50%;box-shadow:0 0 0 4px rgba(83,229,173,.15)}
+.status-chip i{width:8px;height:8px;background:#53e5ad;border-radius:50%;box-shadow:0 0 0 4px rgba(83,229,173,.15);transition:background .3s,box-shadow .3s}
+.status-chip.sync-down i{background:#f59e0b;box-shadow:0 0 0 4px rgba(245,158,11,.2);animation:syncPulse 1.1s ease-in-out infinite}
+@keyframes syncPulse{0%,100%{opacity:1}50%{opacity:.35}}
 .user-name-input{padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;font-size:12px;font-weight:700;backdrop-filter:blur(8px);width:150px}
 .user-name-input::placeholder{color:rgba(255,255,255,.75)}
 nav{top:104px;padding:0 30px;gap:8px;border:0;box-shadow:0 5px 16px rgba(20,46,86,.07)}
@@ -182,7 +184,7 @@ header img#logo{width:176px;height:64px;min-width:176px;object-fit:contain;objec
 <body>
 <header>
   <img id="logo" alt="Emtel"/>
-  <div><h1>RevitaCad</h1><p>Revitalização inteligente de produtos e fornecedores</p></div><div class="header-meta"><input id="userNameInput" class="user-name-input" placeholder="👤 Seu nome" oninput="setReviewUserName(this.value)"><div class="status-chip"><i></i> Base operacional ativa</div></div>
+  <div><h1>RevitaCad</h1><p>Revitalização inteligente de produtos e fornecedores</p></div><div class="header-meta"><input id="userNameInput" class="user-name-input" placeholder="👤 Seu nome" oninput="setReviewUserName(this.value)"><div class="status-chip" id="syncIndicator"><i></i> <span id="syncIndicatorText">Conectando...</span></div></div>
 </header>
 <nav id="nav"></nav>
 <main id="main"></main>
@@ -236,6 +238,32 @@ const SUPABASE_URL = 'https://chgiayjwhhkyjaykguyv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ewTRyjtc2i-Vb4zB_DbL-g_QSQ02s6P';
 const supa = (typeof supabase!=='undefined' && supabase.createClient)
   ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+// ===== Indicador visual de sincronização em tempo real (🟢 sincronizado / 🟠 reconectando) =====
+// reflete o status de inscrição de cada canal Realtime usado no site, para deixar visível
+// quando a atualização automática entre usuários está funcionando ou tentando reconectar.
+const realtimeChannelStatus = {};
+function reportRealtimeStatus(name, status){
+  realtimeChannelStatus[name] = (status === 'SUBSCRIBED');
+  updateSyncIndicator();
+}
+function updateSyncIndicator(){
+  const el = document.getElementById('syncIndicator');
+  const txt = document.getElementById('syncIndicatorText');
+  if(!el || !txt) return;
+  if(!supa){ el.classList.remove('sync-down'); txt.textContent = 'Base operacional ativa'; return; }
+  if(typeof navigator!=='undefined' && navigator.onLine===false){
+    el.classList.add('sync-down'); txt.textContent = '🟠 Sem conexão'; return;
+  }
+  const names = Object.keys(realtimeChannelStatus);
+  const allUp = names.length>0 && names.every(n=>realtimeChannelStatus[n]);
+  if(allUp){ el.classList.remove('sync-down'); txt.textContent = '🟢 Sincronizado em tempo real'; }
+  else { el.classList.add('sync-down'); txt.textContent = '🟠 Reconectando...'; }
+}
+if(typeof window!=='undefined'){
+  window.addEventListener('online', updateSyncIndicator);
+  window.addEventListener('offline', updateSyncIndicator);
+}
 
 function supabaseUpsert(key){
   if(!supa) return;
@@ -298,7 +326,7 @@ function subscribeSupabaseRealtime(){
       }
       persist(); renderPreserveState();
     })
-    .subscribe();
+    .subscribe(status=>reportRealtimeStatus('validacoes', status));
 }
 
 function touchTimestamp(key){
@@ -380,7 +408,7 @@ function subscribeAssignmentsRealtime(){
       }
       assignmentsStore(); renderPreserveState();
     })
-    .subscribe();
+    .subscribe(status=>reportRealtimeStatus('atribuicoes', status));
 }
 function assignTask(sheet, idx, userId){
   const quem = ensureReviewUserName();
@@ -1701,6 +1729,7 @@ protheusEnsureTimer();
 
 (function(){ const el=document.getElementById('userNameInput'); if(el) el.value = reviewUserName(); })();
 backfillValidatedNames();
+updateSyncIndicator();
 render();
 loadImportedFromDB();
 loadStateFromSupabase();
@@ -1716,6 +1745,6 @@ setInterval(()=>{if(current==='dashboard'){const el=document.querySelector('.exe
 setInterval(()=>{ if(current==='protheus') renderProtheus(document.getElementById('main')); }, 15000);
 </script>
 
-<script src="duplicidades-review.js?v=20260923-fix-scroll-sync"></script>
+<script src="duplicidades-review.js?v=20260923-sync-indicator"></script>
 <script src="tema-relogio.js?v=20260923-mantem-input-nome"></script>
 </body></html>
