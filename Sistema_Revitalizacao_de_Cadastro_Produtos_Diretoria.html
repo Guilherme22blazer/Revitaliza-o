@@ -77,6 +77,12 @@ tbody tr.edited{background:var(--amarelo)!important}
 .ia-diag-row{display:flex;align-items:center;gap:6px;font-size:13px;padding:3px 0}
 .ia-pill{display:inline-flex;width:20px;height:20px;border-radius:50%;align-items:center;justify-content:center;font-size:11px}
 .ia-suggestion{background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.ia-ncm-recommend{background:linear-gradient(135deg,#0f766e,#0f9f72);color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:16px}
+.ia-ncm-recommend-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;opacity:.85}
+.ia-ncm-recommend-code{font-size:24px;font-weight:800;margin:4px 0 6px}
+.ia-ncm-recommend p{font-size:13px;margin:0 0 10px;opacity:.95}
+.ia-ncm-recommend .btn{background:#fff;color:#0f766e}
+.ia-ncm-recommend-empty{background:#fef3c7;color:#92610a;font-size:13px;padding:12px 14px}
 .ia-suggestion-head{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
 .ia-just{color:var(--muted);font-size:12px}
 .ia-alert{font-size:13px;padding:4px 0;display:flex;gap:6px;align-items:flex-start}
@@ -999,15 +1005,20 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 // A chave fica só no localStorage deste navegador (Configurações), nunca no
 // código-fonte do site — cada usuário que for usar a IA cola sua própria chave
 // grátis gerada em https://aistudio.google.com/apikey.
-const GEMINI_MODEL = 'gemini-3.6-flash';
+// "-latest" é o alias oficial do Google que sempre aponta pro modelo flash estável do
+// momento — evita quebrar de novo quando o Google descontinuar/trocar a versão numerada.
+// Mantém gemini-3.6-flash como 2ª opção e volta pro 2.0 como último recurso.
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-pro-latest'];
 const GEMINI_SYSTEM_PROMPT = `Você é um assistente fiscal especializado em classificação de mercadorias (NCM) e cadastro de produtos no Brasil.
 
 Sua função é AUDITAR o cadastro de um produto e apontar problemas de descrição, possíveis divergências de NCM e outros dados fiscais, SEMPRE como sugestão — nunca como decisão definitiva.
 
 Regras obrigatórias:
+- A DESCRIÇÃO do produto é a principal base para classificar o NCM: leia com atenção o que o produto realmente é (material, função, aplicação) a partir da descrição, e use os demais campos (tipo, grupo, unidade etc.) só como apoio.
+- Sempre aponte em "ncm_sugerido" pelo menos 1 código de NCM que você recomendaria com base na descrição — mesmo que o NCM atual do cadastro já pareça correto, informe-o ali como a opção recomendada. Só devolva lista vazia se a descrição for curta/genérica demais (ex.: "PRODUTO", "DIVERSOS") a ponto de não dar para chutar nem uma categoria ampla.
 - Nunca invente vigência, extinção ou alteração oficial de NCM: você não tem acesso a uma base fiscal oficial atualizada nesta análise. Diga isso claramente no campo "fontes".
 - Baseie suas sugestões de NCM no seu conhecimento geral da tabela NCM/TIPI e no raciocínio sobre a descrição e demais campos do produto, mas deixe claro que é uma sugestão que REQUER VALIDAÇÃO por um responsável fiscal.
-- Se as informações do produto forem insuficientes para uma classificação segura, diga isso explicitamente e não force uma sugestão de NCM.
+- Se as informações do produto forem insuficientes para uma classificação segura, diga isso explicitamente no campo "justificativa" e reduza a "confianca", mas ainda assim tente indicar o NCM mais provável.
 - "confianca" é sua estimativa de 0 a 100 de quão bem a descrição/dados sustentam a classificação sugerida — nunca invente um número preciso sem justificativa coerente.
 - Responda ESTRITAMENTE em JSON válido, sem nenhum texto fora do JSON, seguindo exatamente este formato:
 
@@ -1031,11 +1042,15 @@ Nunca inclua texto, markdown ou comentários fora do objeto JSON.`;
 function geminiApiKey(){ return (localStorage.getItem('emtel_gemini_key')||'').trim(); }
 function setGeminiApiKey(v){ localStorage.setItem('emtel_gemini_key', (v||'').trim()); }
 function iaBuildUserPrompt(product){
+  const descKey = Object.keys(product).find(k=>/descric/i.test(k));
+  const descValue = descKey ? String(product[descKey]??'').trim() : '';
   const lines = Object.entries(product)
-    .filter(([,v])=>v!==null && v!==undefined && String(v).trim()!=='')
+    .filter(([k,v])=>k!==descKey && v!==null && v!==undefined && String(v).trim()!=='')
     .slice(0,40)
     .map(([k,v])=>String(k).slice(0,100)+': '+String(v).slice(0,500));
-  return 'Audite o seguinte cadastro de produto e responda no formato JSON definido nas instruções do sistema.\n\nDados do produto:\n'+lines.join('\n');
+  return 'Audite o seguinte cadastro de produto e responda no formato JSON definido nas instruções do sistema.\n\n'
+    +'Descrição do produto (base principal para o NCM): '+(descValue||'(não informada)')+'\n\n'
+    +'Demais dados do produto:\n'+lines.join('\n');
 }
 let iaCtx = null;
 const iaHistory = JSON.parse(localStorage.getItem('emtel_ia_history')||'[]');
@@ -1081,7 +1096,14 @@ function iaResultHtml(a){
   const diag = a.diagnostico||{}, ncmAtual = a.ncm_atual||{};
   const sugestoes = Array.isArray(a.ncm_sugerido)?a.ncm_sugerido:[];
   const alertas = Array.isArray(a.alertas)?a.alertas:[];
+  const top = sugestoes[0];
   return `
+    ${top?`<div class="ia-ncm-recommend">
+      <span class="ia-ncm-recommend-label">📌 NCM recomendado com base na descrição</span>
+      <div class="ia-ncm-recommend-code">${escapeHtml(top.codigo||'—')}</div>
+      <p>${escapeHtml(top.descricao||'')}</p>
+      <button class="btn small" onclick="iaApplyNcm('${String(top.codigo||'').replace(/'/g,"\\'")}')">Aplicar este NCM</button>
+    </div>`:`<div class="ia-ncm-recommend ia-ncm-recommend-empty">📌 A IA não conseguiu sugerir um NCM — descrição curta/genérica demais. Veja a justificativa abaixo.</div>`}
     <div class="ia-section"><h4>Diagnóstico</h4>
       <div class="ia-diag-row">${iaBadge(diag.cadastro)} Cadastro</div>
       <div class="ia-diag-row">${iaBadge(diag.descricao)} Descrição</div>
@@ -1139,33 +1161,55 @@ async function iaAnalyze(){
   let step=0;
   const stepTimer = setInterval(()=>{ if(step<liList.length){ liList[step].classList.add('done'); step++; } }, 380);
   const product = iaProductFields(sheet, idx);
-  let res;
-  try{
-    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-      method:'POST',
-      headers:{'content-type':'application/json','x-goog-api-key':apiKey},
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
-        contents: [{ role:'user', parts: [{ text: iaBuildUserPrompt(product) }] }],
-        generationConfig: { maxOutputTokens: 1500, responseMimeType: 'application/json' }
-      })
-    });
-  }catch(networkErr){
-    clearInterval(stepTimer);
-    body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).<br><small>'+escapeHtml(String(networkErr))+'</small></div>';
-    console.warn('IA analyze: falha de rede', networkErr);
+  const sleep = ms => new Promise(r=>setTimeout(r, ms));
+  const loadingMsg = document.querySelector('.ia-loading b');
+  // sem responseMimeType:'application/json' de propósito — esse modo "estruturado" parece
+  // ficar sobrecarregado com mais frequência; já extraímos o JSON da resposta por regex.
+  const requestBody = JSON.stringify({
+    system_instruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
+    contents: [{ role:'user', parts: [{ text: iaBuildUserPrompt(product) }] }],
+    generationConfig: { maxOutputTokens: 1500 }
+  });
+  let res, rawText, networkFailed = false;
+  // tenta cada modelo da lista (com repetição em 503/overload) antes de desistir — se um
+  // modelo estiver sobrecarregado ou tiver sido descontinuado, cai pro próximo automaticamente.
+  modelLoop:
+  for(const model of GEMINI_MODELS){
+    const maxAttempts = 3, backoffs = [0, 2200, 5000];
+    for(let attempt=0; attempt<maxAttempts; attempt++){
+      if(attempt>0 && loadingMsg) loadingMsg.textContent = 'Servidor da IA ocupado, tentando de novo ('+(GEMINI_MODELS.indexOf(model)+1)+'/'+GEMINI_MODELS.length+')...';
+      else if(GEMINI_MODELS.indexOf(model)>0 && loadingMsg) loadingMsg.textContent = 'Tentando modelo alternativo da IA ('+(GEMINI_MODELS.indexOf(model)+1)+'/'+GEMINI_MODELS.length+')...';
+      if(attempt>0) await sleep(backoffs[attempt]);
+      try{
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method:'POST',
+          headers:{'content-type':'application/json','x-goog-api-key':apiKey},
+          body: requestBody
+        });
+      }catch(networkErr){
+        networkFailed = true;
+        console.warn('IA analyze: falha de rede', networkErr);
+        break modelLoop;
+      }
+      networkFailed = false;
+      if(res.status===503 || res.status===404) continue; // tenta de novo / próximo modelo
+      break modelLoop;
+    }
+  }
+  clearInterval(stepTimer);
+  if(networkFailed || !res){
+    body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).</div><button class="btn small" style="margin-top:10px" onclick="iaAnalyze()">🔁 Tentar novamente</button>';
     return;
   }
-  const rawText = await res.text();
-  clearInterval(stepTimer);
+  rawText = await res.text();
   if(!res.ok){
     let msg = rawText.slice(0,300);
     try{ const j = JSON.parse(rawText); msg = (j.error && j.error.message) || msg; }catch(e){}
     const hint = res.status===400 ? ' Verifique se a chave colada em Configurações está correta.'
       : res.status===429 ? ' Cota gratuita do Gemini atingida — tente novamente em instantes.'
-      : res.status===404 ? ' O modelo "'+GEMINI_MODEL+'" pode ter sido descontinuado pelo Google — avise para atualizar o GEMINI_MODEL no código.'
+      : (res.status===503||res.status===404) ? ' Todos os modelos de IA testados estão indisponíveis no momento — tente novamente em alguns minutos.'
       : '';
-    body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div>';
+    body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div><button class="btn small" style="margin-top:10px" onclick="iaAnalyze()">🔁 Tentar novamente</button>';
     console.warn('IA analyze: erro da API Gemini', res.status, rawText);
     return;
   }
