@@ -1008,7 +1008,7 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 // "-latest" é o alias oficial do Google que sempre aponta pro modelo flash estável do
 // momento — evita quebrar de novo quando o Google descontinuar/trocar a versão numerada.
 // Mantém gemini-3.6-flash como 2ª opção e volta pro 2.0 como último recurso.
-const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.0-flash'];
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-pro-latest'];
 const GEMINI_SYSTEM_PROMPT = `Você é um assistente fiscal especializado em classificação de mercadorias (NCM) e cadastro de produtos no Brasil.
 
 Sua função é AUDITAR o cadastro de um produto e apontar problemas de descrição, possíveis divergências de NCM e outros dados fiscais, SEMPRE como sugestão — nunca como decisão definitiva.
@@ -1163,20 +1163,22 @@ async function iaAnalyze(){
   const product = iaProductFields(sheet, idx);
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
   const loadingMsg = document.querySelector('.ia-loading b');
+  // sem responseMimeType:'application/json' de propósito — esse modo "estruturado" parece
+  // ficar sobrecarregado com mais frequência; já extraímos o JSON da resposta por regex.
   const requestBody = JSON.stringify({
     system_instruction: { parts: [{ text: GEMINI_SYSTEM_PROMPT }] },
     contents: [{ role:'user', parts: [{ text: iaBuildUserPrompt(product) }] }],
-    generationConfig: { maxOutputTokens: 1500, responseMimeType: 'application/json' }
+    generationConfig: { maxOutputTokens: 1500 }
   });
   let res, rawText, networkFailed = false;
-  // tenta cada modelo da lista (com repetição em 503) antes de desistir — se um modelo
-  // estiver sobrecarregado ou tiver sido descontinuado, cai pro próximo automaticamente.
+  // tenta cada modelo da lista (com repetição em 503/overload) antes de desistir — se um
+  // modelo estiver sobrecarregado ou tiver sido descontinuado, cai pro próximo automaticamente.
   modelLoop:
   for(const model of GEMINI_MODELS){
-    const maxAttempts = 2, backoffs = [0, 1500];
+    const maxAttempts = 3, backoffs = [0, 2200, 5000];
     for(let attempt=0; attempt<maxAttempts; attempt++){
-      if(attempt>0 && loadingMsg) loadingMsg.textContent = 'Servidor da IA ocupado, tentando de novo...';
-      if(GEMINI_MODELS.indexOf(model)>0 && attempt===0 && loadingMsg) loadingMsg.textContent = 'Tentando modelo alternativo da IA...';
+      if(attempt>0 && loadingMsg) loadingMsg.textContent = 'Servidor da IA ocupado, tentando de novo ('+(GEMINI_MODELS.indexOf(model)+1)+'/'+GEMINI_MODELS.length+')...';
+      else if(GEMINI_MODELS.indexOf(model)>0 && loadingMsg) loadingMsg.textContent = 'Tentando modelo alternativo da IA ('+(GEMINI_MODELS.indexOf(model)+1)+'/'+GEMINI_MODELS.length+')...';
       if(attempt>0) await sleep(backoffs[attempt]);
       try{
         res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -1196,7 +1198,7 @@ async function iaAnalyze(){
   }
   clearInterval(stepTimer);
   if(networkFailed || !res){
-    body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).</div>';
+    body.innerHTML = '<div class="ia-error">Não foi possível conectar à IA (falha de rede).</div><button class="btn small" style="margin-top:10px" onclick="iaAnalyze()">🔁 Tentar novamente</button>';
     return;
   }
   rawText = await res.text();
@@ -1207,7 +1209,7 @@ async function iaAnalyze(){
       : res.status===429 ? ' Cota gratuita do Gemini atingida — tente novamente em instantes.'
       : (res.status===503||res.status===404) ? ' Todos os modelos de IA testados estão indisponíveis no momento — tente novamente em alguns minutos.'
       : '';
-    body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div>';
+    body.innerHTML = '<div class="ia-error">Não foi possível concluir a análise (status '+res.status+').'+escapeHtml(hint)+'<br><small>'+escapeHtml(msg)+'</small></div><button class="btn small" style="margin-top:10px" onclick="iaAnalyze()">🔁 Tentar novamente</button>';
     console.warn('IA analyze: erro da API Gemini', res.status, rawText);
     return;
   }
